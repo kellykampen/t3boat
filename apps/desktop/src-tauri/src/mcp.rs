@@ -198,7 +198,7 @@ fn tool_list() -> Value {
                 "size": size("Defaults to default"),
                 "snapshot": {
                     "type": "string",
-                    "description": "Optional: a saved Boat snapshot name (lowercase letters, digits, dashes) or a Boat share code (bsh_…) to start from"
+                    "description": "Optional: the name of one of the user's saved Boat snapshots (lowercase letters, digits, dashes) to start from. Share codes are refused here: a disk from someone else gets the user's sessions and project .env files, so only the user starts one, from the app."
                 },
                 "projects": { "type": "array", "items": { "type": "string" }, "description": "Project ids from list_projects" },
             }),
@@ -361,6 +361,11 @@ async fn run(app: &Arc<App>, call: Call) -> Result<String> {
     Ok(match call {
         Call::ListMachines {} => json!({ "machines": app.views(), "costs": app.costs() }).to_string(),
         Call::CreateMachine { name, size, snapshot, projects } => {
+            if snapshot.as_deref().is_some_and(|s| s.starts_with("bsh_")) {
+                return Err(anyhow::anyhow!(
+                    "share codes start someone else's disk, which then gets the user's sessions and .env files; ask the user to start it from the t3boat app"
+                ));
+            }
             let m = app
                 .create_machine(&name, size.as_deref().unwrap_or("default"), snapshot.as_deref(), projects)
                 .await?;
@@ -576,10 +581,10 @@ mod tests {
         assert_eq!(r["result"], content("ListMachines".into(), false));
         let r = rpc("tools/call", json!({ "name": "create_machine", "arguments": { "name": "dev" } })).await;
         assert_eq!(r["result"]["content"][0]["text"], r#"CreateMachine { name: "dev", size: None, snapshot: None, projects: [] }"#);
-        let r = rpc("tools/call", json!({ "name": "create_machine", "arguments": { "name": "dev", "snapshot": "bsh_x1" } })).await;
+        let r = rpc("tools/call", json!({ "name": "create_machine", "arguments": { "name": "dev", "snapshot": "base-tools" } })).await;
         assert_eq!(
             r["result"]["content"][0]["text"],
-            r#"CreateMachine { name: "dev", size: None, snapshot: Some("bsh_x1"), projects: [] }"#
+            r#"CreateMachine { name: "dev", size: None, snapshot: Some("base-tools"), projects: [] }"#
         );
         let r = rpc("tools/call", json!({ "name": "sleep_machine", "arguments": { "machine": "dev" } })).await;
         assert_eq!(r["result"], content("an agent is working".into(), true));

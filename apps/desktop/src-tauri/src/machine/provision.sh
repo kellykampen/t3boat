@@ -29,7 +29,8 @@ chmod 700 "$boat_dir"
 # It is restarted only when something it runs on changed: a restart drops every T3 Code
 # connection, and most upgrades only touch the watchdog.
 restart_t3=0
-if [ "$("$t3" --version 2>/dev/null || true)" != "t3 v$version" ]; then
+# A snapshot's own t3 binary is not trusted: a share code can come from anyone.
+if [ "$fresh" = 1 ] || [ "$("$t3" --version 2>/dev/null || true)" != "t3 v$version" ]; then
   if ! curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION="$version" sh >"$boat_dir/install.log" 2>&1; then
     echo "T3 install failed" >&2
     tail -n 40 "$boat_dir/install.log" >&2

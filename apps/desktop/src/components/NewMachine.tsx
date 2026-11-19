@@ -149,7 +149,10 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
             />
           </span>
           <span id="machine-snapshot-hint" className={`hint${snapshotProblem ? " is-error" : ""}`}>
-            {snapshotProblem ?? "Optional · a saved Boat snapshot's files and tools, with a fresh T3 Code"}
+            {snapshotProblem ??
+              (snapshot.startsWith("bsh_")
+                ? "Share code: someone else's disk. It gets your sessions and project .env files, so only use codes you trust"
+                : "Optional · a saved Boat snapshot's files and tools, with a fresh T3 Code")}
           </span>
         </div>
       </div>
