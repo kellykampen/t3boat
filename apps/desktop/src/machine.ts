@@ -184,6 +184,8 @@ export function suggestName(taken: string[]): string {
 }
 
 export const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+/** What a new machine can start from, as `provision::check_start_snapshot` takes it: a saved snapshot's name or a Boat share code. */
+export const SNAPSHOT_RE = /^(?:[a-z0-9][a-z0-9-]{0,127}|bsh_[A-Za-z0-9]{1,128})$/;
 
 export function cleanName(raw: string): string {
   return raw

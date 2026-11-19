@@ -159,12 +159,12 @@ function create(): MockBackend {
   const handlers: { [C in CommandName]: (a: CommandArgs<C>) => Promise<unknown> } = {
     get_state: async () => structuredClone(state),
 
-    async create_machine({ name, size, projects }) {
+    async create_machine({ name, size, projects, snapshot }) {
       if (state.machines.some((m) => m.name === name)) throw `a machine called "${name}" already exists`;
       const row = machine({ id: "", name, size, state: "creating", detail: "Creating sandbox…", paired: false });
       state.machines = [...state.machines, row];
       emit();
-      const steps = ["Creating sandbox…", "Installing T3 server…", "Starting T3 server…", "Asking T3 Code to add it…"];
+      const steps = [snapshot ? `Creating sandbox from ${snapshot}…` : "Creating sandbox…", "Installing T3 server…", "Starting T3 server…", "Asking T3 Code to add it…"];
       for (const step of steps) {
         state.machines = state.machines.map((m) => (m.name === name ? { ...m, detail: step } : m));
         emit();

@@ -394,8 +394,18 @@ fn get_state(ui: State<'_, Ui>) -> UiState {
 }
 
 #[tauri::command]
-async fn create_machine(ui: State<'_, Ui>, name: String, size: String, projects: Option<Vec<String>>) -> Res {
-    ui.app()?.create_machine(&name, &size, projects.unwrap_or_default()).await.map(drop).map_err(err)
+async fn create_machine(
+    ui: State<'_, Ui>,
+    name: String,
+    size: String,
+    projects: Option<Vec<String>>,
+    snapshot: Option<String>,
+) -> Res {
+    ui.app()?
+        .create_machine(&name, &size, snapshot.as_deref(), projects.unwrap_or_default())
+        .await
+        .map(drop)
+        .map_err(err)
 }
 
 /// This computer's T3 projects that can go to a machine.

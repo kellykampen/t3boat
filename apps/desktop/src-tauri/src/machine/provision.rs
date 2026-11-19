@@ -68,8 +68,27 @@ pub fn snapshot_name(name: &str, machine_id: &str) -> String {
     format!("t3boat-{name}-{id}")
 }
 
+/// A snapshot to start a new machine from, as the user gives it: a saved snapshot's name
+/// (lowercase letters, digits and dashes, as Boat names them) or a Boat share code (`bsh_…`).
+/// Checked before it reaches Boat's command line.
+pub fn check_start_snapshot(s: &str) -> Result<()> {
+    // Not starting with a dash: Boat's command line would read it as an option.
+    let name = s.len() <= 128
+        && s.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    let share = s
+        .strip_prefix("bsh_")
+        .is_some_and(|code| !code.is_empty() && code.len() <= 128 && code.chars().all(|c| c.is_ascii_alphanumeric()));
+    if !name && !share {
+        bail!("\"{s}\" is not a snapshot name (lowercase letters, digits and dashes, starting with a letter or digit) or a Boat share code (bsh_…)");
+    }
+    Ok(())
+}
+
 /// Copies the scripts over as a file (the watchdog secret must not appear in any command line)
-/// and runs `provision.sh`.
+/// and runs `provision.sh`. `fresh`: the disk came from someone else's snapshot (possibly another
+/// t3boat machine's), so its T3 and watchdog identity is wiped before anything else.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     boat: &Boat,
     sandbox_id: &str,
@@ -78,12 +97,13 @@ pub async fn run(
     watchdog_secret: &str,
     snapshot: &str,
     mint_upstream_token: bool,
+    fresh: bool,
 ) -> Result<Provisioned> {
     let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
     let script = format!(
         "set -e; d=$(mktemp -d); trap 'rm -rf \"$d\" \"$0\"' EXIT\n\
          echo {p} | base64 -d > \"$d/provision.sh\"; echo {w} | base64 -d > \"$d/watchdog.mjs\"\n\
-         T3BOAT_SECRET={s} bash \"$d/provision.sh\" {v} {sleep} {snapshot} {mint} {name}\n",
+         T3BOAT_SECRET={s} bash \"$d/provision.sh\" {v} {sleep} {snapshot} {mint} {name} {fresh}\n",
         p = b64(PROVISION_SH),
         w = b64(WATCHDOG_MJS),
         v = shell_word(t3_version)?,
@@ -92,6 +112,7 @@ pub async fn run(
         snapshot = shell_word(snapshot)?,
         mint = u8::from(mint_upstream_token),
         name = shell_word(name)?,
+        fresh = u8::from(fresh),
     );
     let name = format!("t3boat-provision-{}.sh", random_token());
     let local = std::env::temp_dir().join(&name);
@@ -124,26 +145,32 @@ pub async fn host(boat: &Boat, sandbox_id: &str) -> Result<(String, String)> {
 }
 
 /// Creates a new machine end to end. Takes about a minute, most of it Boat and the T3 install.
-/// On failure after `created`, the caller deletes the sandbox.
+/// On failure after `created`, the caller deletes the sandbox. `start_from`: a saved snapshot or
+/// share code its disk starts from instead of Boat's base image; it gets its own identity.
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     boat: &Boat,
     name: &str,
     size: &str,
+    start_from: Option<&str>,
     t3_version: &str,
     local_port: u16,
     created: impl FnOnce(&str),
     progress: impl Fn(&str),
 ) -> Result<Machine> {
     self::size(size)?;
+    if let Some(s) = start_from {
+        check_start_snapshot(s)?;
+    }
     progress("Creating sandbox on Boat");
     let id = boat
-        .create(&sandbox_name(name), size, None)
+        .create(&sandbox_name(name), size, start_from)
         .await
         .context("creating the Boat sandbox")?;
     created(&id);
     progress("Installing T3 Code");
     let secret = random_token();
-    let provisioned = run(boat, &id, name, t3_version, &secret, &snapshot_name(name, &id), true).await?;
+    let provisioned = run(boat, &id, name, t3_version, &secret, &snapshot_name(name, &id), true, start_from.is_some()).await?;
     progress("Opening the machine's address");
     let (upstream_url, watchdog_url) = host(boat, &id).await?;
     Ok(Machine {
@@ -167,4 +194,19 @@ pub async fn create(
         next_due_at: None,
         connect: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_start_snapshot;
+
+    #[test]
+    fn start_snapshot() {
+        for ok in ["base-tools", "t3boat-dev-sb-1a2b", "bsh_AbC123"] {
+            assert!(check_start_snapshot(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "Tools", "a b", "x;rm -rf ~", "--help", "bsh_", "bsh_a-b", "snap_1", "$(id)"] {
+            assert!(check_start_snapshot(bad).is_err(), "{bad}");
+        }
+    }
 }

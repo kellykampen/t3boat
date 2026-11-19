@@ -555,6 +555,7 @@ impl MachineRuntime {
             &record.watchdog_secret,
             &provision::snapshot_name(&record.name, &record.id),
             false,
+            false,
         )
         .await?;
         self.update_record(|m| {

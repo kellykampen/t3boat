@@ -318,9 +318,20 @@ impl App {
     }
 
     /// Creates a machine, then adds this computer's T3 projects `projects` (ids) to it.
-    pub async fn create_machine(self: &Arc<Self>, name: &str, size: &str, projects: Vec<String>) -> Result<Arc<MachineRuntime>> {
+    /// `snapshot`: a saved snapshot or share code to start from; empty means Boat's base image.
+    pub async fn create_machine(
+        self: &Arc<Self>,
+        name: &str,
+        size: &str,
+        snapshot: Option<&str>,
+        projects: Vec<String>,
+    ) -> Result<Arc<MachineRuntime>> {
         if !valid_name(name) {
             bail!("machine names are 1-32 lowercase letters, digits or dashes, starting with a letter or digit");
+        }
+        let snapshot = snapshot.filter(|s| !s.is_empty());
+        if let Some(s) = snapshot {
+            provision::check_start_snapshot(s)?;
         }
         let port = self.reserve(name)?;
         self.shared.changed();
@@ -330,6 +341,7 @@ impl App {
                 &self.shared.boat,
                 name,
                 size,
+                snapshot,
                 &version,
                 port,
                 |sandbox| self.set_creating_sandbox(name, sandbox),

@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
 # Runs on a Boat sandbox, as `user`. Idempotent; also used to upgrade a machine.
-#   T3BOAT_SECRET=<watchdog-secret> provision.sh <t3-version> <sleep-after-secs> <snapshot-name> <mint-upstream-token:0|1> <name>
+#   T3BOAT_SECRET=<watchdog-secret> provision.sh <t3-version> <sleep-after-secs> <snapshot-name> <mint-upstream-token:0|1> <name> <fresh-from-snapshot:0|1>
 # Expects watchdog.mjs next to it. Prints one JSON line: {"environmentId", "upstreamToken"?}.
 set -euo pipefail
 
-version="$1" sleep_after="$2" snapshot="$3" mint_upstream="$4" name="$5"
+version="$1" sleep_after="$2" snapshot="$3" mint_upstream="$4" name="$5" fresh="$6"
 secret="$T3BOAT_SECRET"
+
+# A new machine started from a saved snapshot, maybe another t3boat machine's: drop that
+# machine's identity before it can act as it (its watchdog would snapshot over the source's
+# snapshot), its T3 environment id, auth secrets and chats. The t3 binary, the user's repos and
+# tools stay; they are what the snapshot is for.
+if [ "$fresh" = 1 ]; then
+  for unit in t3boat-watchdog.service t3code.service; do
+    systemctl --user stop "$unit" >/dev/null 2>&1 || true
+  done
+  rm -rf "$HOME/.t3/userdata" "$HOME/.t3boat"
+fi
+
 here="$(cd "$(dirname "$0")" && pwd)"
 t3="$HOME/.local/bin/t3"
 boat_dir="$HOME/.t3boat"
