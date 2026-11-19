@@ -20,6 +20,7 @@ Chat in T3 Code as usual. A message to a sleeping machine wakes it; running work
 - T3 Connect, to reach a machine from your phone or browser
 - Cost per machine, today and this month
 - An MCP server, so agents on your computer can manage machines
+- Optionally, machines on your Tailscale tailnet with Tailscale SSH
 
 ## What you need
 
@@ -56,6 +57,33 @@ Please build and install t3boat (https://github.com/paukraft/t3boat) on my compu
 3. Work in T3 Code as usual. Push or open a PR from the machine.
 
 To let Claude Code or Codex on your computer manage machines, click "Add" next to them in t3boat's settings.
+
+## Tailscale
+
+t3boat can put new machines on your [Tailscale](https://tailscale.com) tailnet, with [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh) on, so you can `ssh user@t3boat-<name>` from your own devices. T3 Code keeps connecting the usual way; Tailscale is extra.
+
+1. In the Tailscale admin console, define a tag for the machines and an SSH rule (Access controls):
+
+   ```jsonc
+   {
+     "tagOwners": {
+       "tag:t3boat": ["autogroup:admin"]
+     },
+     "ssh": [
+       {
+         "action": "accept",
+         "src": ["autogroup:member"],
+         "dst": ["tag:t3boat"],
+         "users": ["user"]
+       }
+     ]
+   }
+   ```
+
+2. Under Settings → Keys, generate an auth key that is **reusable**, **pre-approved** and **tagged** `tag:t3boat` (tagged nodes don't expire).
+3. Paste it in t3boat's Settings → Tailscale and click Save. It is kept in your system keychain (macOS Keychain), nowhere else.
+
+Machines created from then on join as `t3boat-<name>`. A sleeping machine shows as offline and comes back when it wakes. Existing machines are left alone. Deleting an awake machine logs it out of the tailnet; delete an asleep one and remove its offline node in the admin console.
 
 ## Development
 

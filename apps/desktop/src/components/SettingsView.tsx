@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import type { McpClient, Settings, UiState } from "../types";
 import { AgentName, AgentNames } from "./AgentLogos";
 import { Icon } from "./Icons";
@@ -15,11 +15,23 @@ interface Props {
   onSave: (s: Settings) => void;
   /** never rejects; errors are shown by the caller */
   onAddMcp: (client: McpClient) => Promise<void>;
+  /** never rejects; false = it failed, errors are shown by the caller */
+  onSaveTailscaleKey: (key: string) => Promise<boolean>;
+  /** never rejects; errors are shown by the caller */
+  onRemoveTailscaleKey: () => Promise<void>;
   onQuit: () => void;
   onBack: () => void;
 }
 
-export function SettingsView({ state, onSave, onAddMcp, onQuit, onBack }: Props) {
+export function SettingsView({
+  state,
+  onSave,
+  onAddMcp,
+  onSaveTailscaleKey,
+  onRemoveTailscaleKey,
+  onQuit,
+  onBack,
+}: Props) {
   // optimistic copy; the next "state" event is the source of truth
   const [s, setS] = useState(state.settings);
   useEffect(() => setS(state.settings), [state.settings]);
@@ -35,6 +47,22 @@ export function SettingsView({ state, onSave, onAddMcp, onQuit, onBack }: Props)
     onAddMcp(client).finally(() => setAdding(null));
   };
   const missing = CLIENTS.filter((c) => state.mcp[c.id] === null).map((c) => c.name);
+
+  // the key lives here only until saved; the backend never sends it back
+  const [tsKey, setTsKey] = useState("");
+  const [tsBusy, setTsBusy] = useState(false);
+  const saveKey = (e: FormEvent) => {
+    e.preventDefault();
+    if (!tsKey.trim() || tsBusy) return;
+    setTsBusy(true);
+    onSaveTailscaleKey(tsKey)
+      .then((ok) => ok && setTsKey(""))
+      .finally(() => setTsBusy(false));
+  };
+  const removeKey = () => {
+    setTsBusy(true);
+    onRemoveTailscaleKey().finally(() => setTsBusy(false));
+  };
 
   const change = (p: Partial<Settings>) => {
     const next = { ...s, ...p };
@@ -103,6 +131,56 @@ export function SettingsView({ state, onSave, onAddMcp, onQuit, onBack }: Props)
             ) : (
               "Their agents can then create, wake and send work to machines"
             )}
+          </span>
+        </div>
+        <div className="setting">
+          <label className="caption" htmlFor="tailscale-key">
+            tailscale
+          </label>
+          <span className="setting-name">Join new machines to your tailnet</span>
+          {state.tailscale.configured ? (
+            <div className="tailscale-row">
+              <span className="mcp-added">
+                <Icon name="check" size={10} />
+                <span>Auth key saved in your keychain</span>
+              </span>
+              <button className="btn btn-sm btn-quiet" disabled={tsBusy} aria-busy={tsBusy} onClick={removeKey}>
+                Remove
+              </button>
+            </div>
+          ) : (
+            <form className="tailscale-row" onSubmit={saveKey}>
+              <span className="prompt-input tailscale-input">
+                <input
+                  id="tailscale-key"
+                  type="password"
+                  placeholder="tskey-auth-…"
+                  aria-describedby="tailscale-hint"
+                  value={tsKey}
+                  onChange={(e) => setTsKey(e.target.value)}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </span>
+              <button
+                type="submit"
+                className="btn btn-sm btn-outline"
+                disabled={!tsKey.trim() || tsBusy}
+                aria-busy={tsBusy}
+              >
+                {tsBusy ? (
+                  <>
+                    <Dots /> Saving…
+                  </>
+                ) : (
+                  "Save"
+                )}
+              </button>
+            </form>
+          )}
+          <span className="hint" id="tailscale-hint">
+            Use a reusable, pre-authorized auth key tagged e.g. tag:t3boat. New machines join as t3boat-‹name› with
+            Tailscale SSH; asleep, they show as offline.
           </span>
         </div>
       </div>

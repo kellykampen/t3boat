@@ -139,3 +139,19 @@
 .account-email:hover {
   color: var(--fg);
 }
+
+/* ── settings: tailscale ─────────────────────────────── */
+
+.tailscale-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+.prompt-input.tailscale-input {
+  height: 30px;
+  padding: 0 10px;
+}
+.tailscale-input input {
+  font-size: 12px;
+}

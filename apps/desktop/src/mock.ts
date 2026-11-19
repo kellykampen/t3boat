@@ -108,6 +108,7 @@ function seed(): UiState {
     costs: { today: 0.42, month: 12.8, startsToday: 3, startsLimit: 50 },
     settings: { startAtLogin: true },
     mcp: params.get("mcp") === "mixed" ? { claudeCode: true, codex: null } : { claudeCode: false, codex: false },
+    tailscale: { configured: params.get("tailscale") === "1" },
     sizes: [
       { id: "small", spec: "2 vCPU · 4 GB", hourly: 0.018 },
       { id: "default", spec: "4 vCPU · 8 GB", hourly: 0.036 },
@@ -324,6 +325,19 @@ function create(): MockBackend {
 
     async update_settings({ settings }) {
       state.settings = settings;
+      emit();
+    },
+
+    async set_tailscale_key({ key }) {
+      await wait(400);
+      if (!key.trim().startsWith("tskey-")) throw "that doesn't look like a Tailscale auth key (they start with tskey-)";
+      state.tailscale = { configured: true };
+      emit();
+    },
+
+    async remove_tailscale_key() {
+      await wait(300);
+      state.tailscale = { configured: false };
       emit();
     },
 

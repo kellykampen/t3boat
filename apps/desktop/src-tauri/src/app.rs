@@ -6,10 +6,12 @@ use crate::machine::{provision, Event, MachineRuntime, Power, Shared, WatchdogPh
 use crate::proxy;
 use crate::store::{Settings, Spend, State, Store};
 use crate::t3desktop::T3Desktop;
+use crate::tailscale::{self, AuthKey};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
@@ -142,6 +144,8 @@ pub struct App {
     retired_ports: Mutex<Vec<u16>>,
     /// Sandboxes of creates the app didn't live to finish, until deleted.
     leftover_sandboxes: Mutex<Vec<String>>,
+    /// A Tailscale auth key is in the keychain: `State::tailscale_key`.
+    tailscale_key: AtomicBool,
 }
 
 impl App {
@@ -180,6 +184,7 @@ impl App {
             spend: Mutex::new(state.spend),
             retired_ports: Mutex::new(state.retired_ports),
             leftover_sandboxes: Mutex::new(leftover),
+            tailscale_key: AtomicBool::new(state.tailscale_key),
         });
         for record in state.machines {
             app.spawn(app.runtime(record));
@@ -268,6 +273,7 @@ impl App {
             spend,
             retired_ports,
             pending_sandboxes,
+            tailscale_key: self.tailscale_configured(),
         };
         if let Err(e) = self.store.save(&state) {
             tracing::error!("saving state: {e:#}");
@@ -277,6 +283,43 @@ impl App {
     pub fn update_settings(&self, settings: Settings) {
         *self.shared.settings.write().unwrap() = settings;
         self.shared.persist();
+    }
+
+    /// New machines join the user's tailnet.
+    pub fn tailscale_configured(&self) -> bool {
+        self.tailscale_key.load(Ordering::Relaxed)
+    }
+
+    /// Saves the key to the keychain; machines created from now on join with it.
+    pub async fn set_tailscale_key(&self, key: &str) -> Result<()> {
+        let key = AuthKey::parse(key)?;
+        tokio::task::spawn_blocking(move || tailscale::save(&key)).await??;
+        self.set_tailscale_flag(true);
+        Ok(())
+    }
+
+    /// Machines already on the tailnet stay there.
+    pub async fn remove_tailscale_key(&self) -> Result<()> {
+        tokio::task::spawn_blocking(tailscale::remove).await??;
+        self.set_tailscale_flag(false);
+        Ok(())
+    }
+
+    fn set_tailscale_flag(&self, on: bool) {
+        self.tailscale_key.store(on, Ordering::Relaxed);
+        self.shared.persist();
+        self.shared.changed();
+    }
+
+    /// The key a new machine joins with; read from the keychain only when one was saved.
+    async fn tailscale_key(&self) -> Result<Option<AuthKey>> {
+        if !self.tailscale_configured() {
+            return Ok(None);
+        }
+        match tokio::task::spawn_blocking(tailscale::load).await?? {
+            Some(key) => Ok(Some(key)),
+            None => bail!("the Tailscale key is no longer in the keychain; save it again in Settings, or remove it"),
+        }
     }
 
     /// Claims the name and a local port for a new machine, so concurrent creates never share
@@ -322,6 +365,8 @@ impl App {
         if !valid_name(name) {
             bail!("machine names are 1-32 lowercase letters, digits or dashes, starting with a letter or digit");
         }
+        // Before any sandbox exists: a keychain problem costs nothing.
+        let tailscale = self.tailscale_key().await?;
         let port = self.reserve(name)?;
         self.shared.changed();
         let result = async {
@@ -332,6 +377,7 @@ impl App {
                 size,
                 &version,
                 port,
+                tailscale.as_ref(),
                 |sandbox| self.set_creating_sandbox(name, sandbox),
                 |step| self.set_creating_step(name, step),
             )
@@ -423,6 +469,14 @@ impl App {
             let _waking = machine.waking.lock().await;
             // Read under the lock: a wake may have restored it onto a new sandbox.
             let record = machine.record();
+            // Takes the node off the tailnet, best effort. Asleep, it stays there offline until
+            // removed in Tailscale's admin console: waking it just for this would cost a start.
+            if record.tailscale
+                && machine.power() == Power::Running
+                && let Err(e) = boat.exec_ok(&record.sandbox_id, tailscale::LOGOUT_SCRIPT, 60).await
+            {
+                tracing::warn!("logging {} out of the tailnet: {e:#}", record.id);
+            }
             if let Err(e) = boat.delete(&record.sandbox_id).await {
                 // Already gone on Boat is fine; anything else keeps the machine.
                 if !boat.confirmed_gone(&record.sandbox_id).await {

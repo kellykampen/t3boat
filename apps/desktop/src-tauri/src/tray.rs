@@ -89,6 +89,14 @@ struct UiState {
     settings: Settings,
     sizes: &'static [SizeInfo],
     mcp: McpStatus,
+    tailscale: TailscaleStatus,
+}
+
+/// Only whether a key is saved; the key itself never reaches the UI.
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TailscaleStatus {
+    configured: bool,
 }
 
 impl Ui {
@@ -109,6 +117,7 @@ impl Ui {
             settings: app.as_ref().map(|a| a.settings()).unwrap_or_default(),
             sizes: SIZES,
             mcp: self.mcp.lock().unwrap().clone(),
+            tailscale: TailscaleStatus { configured: app.as_ref().is_some_and(|a| a.tailscale_configured()) },
         }
     }
 }
@@ -491,6 +500,17 @@ async fn update_settings(handle: AppHandle, ui: State<'_, Ui>, settings: Setting
     Ok(())
 }
 
+/// Saves the Tailscale auth key to the keychain; new machines join the tailnet with it.
+#[tauri::command]
+async fn set_tailscale_key(ui: State<'_, Ui>, key: String) -> Res {
+    ui.app()?.set_tailscale_key(&key).await.map_err(err)
+}
+
+#[tauri::command]
+async fn remove_tailscale_key(ui: State<'_, Ui>) -> Res {
+    ui.app()?.remove_tailscale_key().await.map_err(err)
+}
+
 #[tauri::command]
 async fn setup_action(handle: AppHandle, ui: State<'_, Ui>, action: String) -> Res {
     let set_busy = |busy: bool| {
@@ -591,6 +611,8 @@ pub fn run() {
             get_machine_details,
             latest_thread,
             update_settings,
+            set_tailscale_key,
+            remove_tailscale_key,
             setup_action,
             add_mcp,
             quit_app

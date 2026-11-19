@@ -185,6 +185,16 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
     });
 
   const addMcp = (client: McpClient) => call("add_mcp", { client }).catch((e) => toast(errorText(e)));
+  // resolves to whether it worked; the message is a toast
+  const saveTailscaleKey = (key: string) =>
+    call("set_tailscale_key", { key }).then(
+      () => true,
+      (e) => {
+        toast(errorText(e));
+        return false;
+      },
+    );
+  const removeTailscaleKey = () => call("remove_tailscale_key", undefined).catch((e) => toast(errorText(e)));
 
   const create = (name: string, size: string, projects: string[]) => {
     setView("list");
@@ -227,6 +237,8 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
           state={state}
           onSave={(settings) => call("update_settings", { settings }).catch((e) => toast(errorText(e)))}
           onAddMcp={addMcp}
+          onSaveTailscaleKey={saveTailscaleKey}
+          onRemoveTailscaleKey={removeTailscaleKey}
           onQuit={() => call("quit_app", undefined).catch((e) => toast(errorText(e)))}
           onBack={back}
         />

@@ -54,6 +54,9 @@ interface UiState {
   mcp: { claudeCode: boolean | null; codex: boolean | null };
                                    // t3boat registered as an MCP server in that CLI; null = CLI not installed
                                    // (Settings → "Coding agents" disables its button with a hint)
+  tailscale: { configured: boolean }; // a Tailscale auth key is saved in the OS keychain; the key
+                                   // itself never reaches the UI. Settings → Tailscale shows a
+                                   // password field + Save when false, "saved" + Remove when true
 }
 ```
 
@@ -95,6 +98,8 @@ interface MachineDetails {
 | `get_machine_details` | `{ id }` | → `MachineDetails`; should work while asleep (from cache / Boat API, without waking it). Rejection = toast, last data stays |
 | `add_mcp` | `{ client }` | `"claudeCode" \| "codex"`: registers t3boat as an MCP server in that CLI's config so its agents can control t3boat; resolves when done, then `UiState.mcp[client]` is `true` |
 | `update_settings` | `{ settings }` | full settings object |
+| `set_tailscale_key` | `{ key }` | saves a Tailscale auth key to the OS keychain (never a file, the state JSON, logs or messages); rejects a value not shaped like `tskey-…`. Machines created from then on install Tailscale and join the tailnet as `t3boat-<name>` with Tailscale SSH; a failure there fails the create. Wakes and upgrades never use the key |
+| `remove_tailscale_key` | – | deletes it from the keychain; machines already on the tailnet stay there. Deleting a machine that joined logs it out first when it is awake (asleep: its offline node stays until removed in Tailscale's admin console) |
 | `setup_action` | `{ action }` | `"installBoat" \| "signInBoat" \| "installT3" \| "recheck"` |
 | `quit_app` | – | |
 

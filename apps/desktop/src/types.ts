@@ -73,6 +73,8 @@ export interface UiState {
   sizes: Size[];
   /** null = that CLI isn't installed */
   mcp: Record<McpClient, boolean | null>;
+  /** a Tailscale auth key is saved (in the keychain); the key itself never reaches the UI */
+  tailscale: { configured: boolean };
 }
 
 export interface MachineDetails {
@@ -107,6 +109,8 @@ export interface Commands {
   get_machine_details: [{ id: string }, MachineDetails];
   add_mcp: [{ client: McpClient }, void];
   update_settings: [{ settings: Settings }, void];
+  set_tailscale_key: [{ key: string }, void]; // saved to the keychain; new machines join the tailnet
+  remove_tailscale_key: [undefined, void]; // machines already on the tailnet stay there
   setup_action: [{ action: SetupAction }, void];
   quit_app: [undefined, void];
 }

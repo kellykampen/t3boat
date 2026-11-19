@@ -555,6 +555,8 @@ impl MachineRuntime {
             &record.watchdog_secret,
             &provision::snapshot_name(&record.name, &record.id),
             false,
+            // Never the Tailscale key: an upgrade leaves a machine's tailnet login as it is.
+            None,
         )
         .await?;
         self.update_record(|m| {

@@ -4,6 +4,7 @@
 use crate::boat::Boat;
 use crate::proxy::auth::random_token;
 use crate::store::Machine;
+use crate::tailscale::AuthKey;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
 use serde::Deserialize;
@@ -68,8 +69,11 @@ pub fn snapshot_name(name: &str, machine_id: &str) -> String {
     format!("t3boat-{name}-{id}")
 }
 
-/// Copies the scripts over as a file (the watchdog secret must not appear in any command line)
-/// and runs `provision.sh`.
+/// Copies the scripts over as a file (the watchdog secret and the Tailscale key must not appear
+/// in any command line) and runs `provision.sh`. `tailscale`: join the user's tailnet with this
+/// key; only a create passes one, so an upgrade never logs a machine in or needs the key. The
+/// key reaches `provision.sh` as a 0600 file in the script's temp dir, deleted on exit.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     boat: &Boat,
     sandbox_id: &str,
@@ -78,21 +82,9 @@ pub async fn run(
     watchdog_secret: &str,
     snapshot: &str,
     mint_upstream_token: bool,
+    tailscale: Option<&AuthKey>,
 ) -> Result<Provisioned> {
-    let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
-    let script = format!(
-        "set -e; d=$(mktemp -d); trap 'rm -rf \"$d\" \"$0\"' EXIT\n\
-         echo {p} | base64 -d > \"$d/provision.sh\"; echo {w} | base64 -d > \"$d/watchdog.mjs\"\n\
-         T3BOAT_SECRET={s} bash \"$d/provision.sh\" {v} {sleep} {snapshot} {mint} {name}\n",
-        p = b64(PROVISION_SH),
-        w = b64(WATCHDOG_MJS),
-        v = shell_word(t3_version)?,
-        s = shell_word(watchdog_secret)?,
-        sleep = SLEEP_AFTER_SECS,
-        snapshot = shell_word(snapshot)?,
-        mint = u8::from(mint_upstream_token),
-        name = shell_word(name)?,
-    );
+    let script = script(name, t3_version, watchdog_secret, snapshot, mint_upstream_token, tailscale)?;
     let name = format!("t3boat-provision-{}.sh", random_token());
     let local = std::env::temp_dir().join(&name);
     crate::store::write_private(&local, script.as_bytes())?;
@@ -107,6 +99,40 @@ pub async fn run(
         .find(|l| l.starts_with('{'))
         .ok_or_else(|| anyhow!("provisioning printed no result"))?;
     Ok(serde_json::from_str(line)?)
+}
+
+/// The uploaded script: unpacks `provision.sh` and `watchdog.mjs` (and the Tailscale key, as a
+/// 0600 file) into a temp dir it deletes on exit, with itself, and runs `provision.sh`.
+fn script(
+    name: &str,
+    t3_version: &str,
+    watchdog_secret: &str,
+    snapshot: &str,
+    mint_upstream_token: bool,
+    tailscale: Option<&AuthKey>,
+) -> Result<String> {
+    let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+    let (ts_file, ts_env) = match tailscale {
+        Some(key) => (
+            format!("(umask 077; echo {} | base64 -d > \"$d/tailscale.key\")\n", b64(key.expose())),
+            "T3BOAT_TAILSCALE_KEY_FILE=\"$d/tailscale.key\" ",
+        ),
+        None => (String::new(), ""),
+    };
+    Ok(format!(
+        "set -e; d=$(mktemp -d); trap 'rm -rf \"$d\" \"$0\"' EXIT\n\
+         echo {p} | base64 -d > \"$d/provision.sh\"; echo {w} | base64 -d > \"$d/watchdog.mjs\"\n\
+         {ts_file}\
+         T3BOAT_SECRET={s} {ts_env}bash \"$d/provision.sh\" {v} {sleep} {snapshot} {mint} {name}\n",
+        p = b64(PROVISION_SH),
+        w = b64(WATCHDOG_MJS),
+        v = shell_word(t3_version)?,
+        s = shell_word(watchdog_secret)?,
+        sleep = SLEEP_AFTER_SECS,
+        snapshot = shell_word(snapshot)?,
+        mint = u8::from(mint_upstream_token),
+        name = shell_word(name)?,
+    ))
 }
 
 /// Only `[A-Za-z0-9._-]` reaches the remote shell.
@@ -124,13 +150,16 @@ pub async fn host(boat: &Boat, sandbox_id: &str) -> Result<(String, String)> {
 }
 
 /// Creates a new machine end to end. Takes about a minute, most of it Boat and the T3 install.
-/// On failure after `created`, the caller deletes the sandbox.
+/// On failure after `created`, the caller deletes the sandbox. `tailscale`: also joins the
+/// user's tailnet; a failure there fails the create.
+#[allow(clippy::too_many_arguments)]
 pub async fn create(
     boat: &Boat,
     name: &str,
     size: &str,
     t3_version: &str,
     local_port: u16,
+    tailscale: Option<&AuthKey>,
     created: impl FnOnce(&str),
     progress: impl Fn(&str),
 ) -> Result<Machine> {
@@ -141,9 +170,9 @@ pub async fn create(
         .await
         .context("creating the Boat sandbox")?;
     created(&id);
-    progress("Installing T3 Code");
+    progress(if tailscale.is_some() { "Installing T3 Code and Tailscale" } else { "Installing T3 Code" });
     let secret = random_token();
-    let provisioned = run(boat, &id, name, t3_version, &secret, &snapshot_name(name, &id), true).await?;
+    let provisioned = run(boat, &id, name, t3_version, &secret, &snapshot_name(name, &id), true, tailscale).await?;
     progress("Opening the machine's address");
     let (upstream_url, watchdog_url) = host(boat, &id).await?;
     Ok(Machine {
@@ -166,5 +195,29 @@ pub async fn create(
         created_at: chrono::Utc::now().timestamp(),
         next_due_at: None,
         connect: false,
+        tailscale: tailscale.is_some(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KEY: &str = "tskey-auth-kAbc123CNTRL-secretpart";
+
+    #[test]
+    fn tailscale_key_travels_as_a_file() {
+        let key = AuthKey::parse(KEY).unwrap();
+        let s = script("dev", "0.0.21", "secret", "t3boat-dev-bx", true, Some(&key)).unwrap();
+        assert!(!s.contains(KEY), "the key must not appear in the clear");
+        assert!(s.contains(&base64::engine::general_purpose::STANDARD.encode(KEY)));
+        assert!(s.contains("(umask 077; echo "));
+        assert!(s.contains("T3BOAT_TAILSCALE_KEY_FILE=\"$d/tailscale.key\" bash"));
+    }
+
+    #[test]
+    fn no_tailscale_without_a_key() {
+        let s = script("dev", "0.0.21", "secret", "t3boat-dev-bx", false, None).unwrap();
+        assert!(!s.contains("tailscale.key") && !s.contains("T3BOAT_TAILSCALE"));
+    }
 }

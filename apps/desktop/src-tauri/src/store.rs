@@ -42,6 +42,9 @@ pub struct Machine {
     /// T3 Connect is on there: other devices reach it with the user's T3 account.
     #[serde(default)]
     pub connect: bool,
+    /// Joined the user's tailnet when created: a delete logs it out first.
+    #[serde(default)]
+    pub tailscale: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -93,6 +96,9 @@ pub struct State {
     /// Sandboxes of creates still running: deleted at the next start if the app quit or crashed
     /// before the create finished.
     pub pending_sandboxes: Vec<String>,
+    /// A Tailscale auth key is in the keychain. Only this flag is kept here, never the key, so
+    /// that without one nothing reads the keychain at all.
+    pub tailscale_key: bool,
 }
 
 pub struct Store {

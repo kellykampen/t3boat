@@ -38,9 +38,19 @@ urlencoding = "2"
 bytes = "1"
 sha2 = "0.10"
 
+# The Tailscale auth key lives in the OS credential store, never in a file. Each platform names
+# its store explicitly: without one, keyring falls back to an in-memory mock.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 gdkx11 = "0.18"
 gtk = "0.18"
+# Secret Service over zbus: pure Rust, no libdbus to build against.
+keyring = { version = "3", features = ["async-secret-service", "async-io", "crypto-rust"] }
 
 [profile.release]
 codegen-units = 1
