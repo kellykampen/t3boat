@@ -67,9 +67,9 @@ pub fn remove() -> Result<()> {
 }
 
 /// Run on the machine before its sandbox is deleted: takes the node off the tailnet. Only a
-/// node t3boat joined (it left the owner marker) is touched.
+/// node t3boat joined (it left the owner marker, next to tailscaled's state) is touched.
 pub const LOGOUT_SCRIPT: &str =
-    "if [ -f ~/.t3boat/tailscale-owner ] && command -v tailscale >/dev/null; then sudo tailscale logout; fi";
+    "if sudo test -f /var/lib/tailscale/t3boat-owner && command -v tailscale >/dev/null; then sudo tailscale logout; fi";
 
 #[cfg(test)]
 mod tests {

@@ -94,27 +94,24 @@ systemctl --user restart t3boat-watchdog.service
 
 # Tailscale. With a key: installed and joined to the user's tailnet with Tailscale SSH, unless
 # already logged in. Without one (every upgrade): left exactly as it is, but for one case. The
-# owner marker names the machine that joined (its snapshot name, unique per machine); a disk
-# copied from another machine carries that machine's node, which this one must not pose as:
-# it is logged out, and joined anew only with a key. No --accept-routes: a tailnet route over
+# owner marker names the machine that joined (its snapshot name, unique per machine) and lives
+# with tailscaled's own state, so it travels exactly when that state does. A disk copied from
+# another machine carries that machine's node key: its state is wiped here, on the machine only.
+# Never `tailscale logout`: that would expire the key the original machine still uses and take
+# it off the tailnet. Joined anew only with a key. No --accept-routes: a tailnet route over
 # Boat's own networks (10.77.0.0/16, 192.168.122.0/24) would cut the machine off.
 ts_key="${T3BOAT_TAILSCALE_KEY_FILE:-}"
-ts_owner="$boat_dir/tailscale-owner"
+ts_dir=/var/lib/tailscale
+ts_owner="$ts_dir/t3boat-owner"
 ts_state() {
   sudo tailscale status --json 2>/dev/null \
     | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).BackendState||"")}catch{}})' \
     || true
 }
-if [ -f "$ts_owner" ] && [ "$(cat "$ts_owner")" != "$snapshot" ] && command -v tailscale >/dev/null; then
-  if timeout 60 sudo tailscale logout >&2; then
-    rm -f "$ts_owner"
-  elif [ -n "$ts_key" ]; then
-    echo "Tailscale: couldn't log out the node copied from another machine" >&2
-    exit 1
-  else
-    # Kept: the next upgrade tries again.
-    echo "Tailscale: couldn't log out the node copied from another machine; will retry" >&2
-  fi
+if sudo test -f "$ts_owner" && [ "$(sudo cat "$ts_owner")" != "$snapshot" ]; then
+  sudo systemctl stop tailscaled >/dev/null 2>&1 || true
+  sudo rm -rf "$ts_dir"
+  # Started again (as a new, logged-out node) only below, with a key.
 fi
 if [ -n "$ts_key" ]; then
   if ! command -v tailscale >/dev/null; then
@@ -137,7 +134,7 @@ if [ -n "$ts_key" ]; then
       fi
       ;;
   esac
-  echo "$snapshot" >"$ts_owner"
+  echo "$snapshot" | sudo tee "$ts_owner" >/dev/null
 fi
 
 upstream_token=""
