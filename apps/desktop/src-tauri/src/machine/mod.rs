@@ -7,6 +7,7 @@ mod link;
 pub mod projects;
 pub mod provision;
 pub mod signin;
+pub mod tailnet;
 mod work;
 
 use crate::boat::{Boat, Resume, Sandbox};
@@ -169,6 +170,11 @@ pub struct MachineRuntime {
     /// Its T3 projects as last read, and those t3boat is adding.
     projects: Mutex<Vec<projects::MachineProject>>,
     adding: Mutex<Vec<projects::MachineProject>>,
+    /// Joining the user's tailnet with a browser sign-in: its progress, or how it failed.
+    tailnet_join: Mutex<Option<tailnet::TailnetJoin>>,
+    /// One join at a time.
+    joining_tailnet: tokio::sync::Mutex<()>,
+    tailnet_cancel: tokio::sync::Notify,
 }
 
 impl MachineRuntime {
@@ -191,6 +197,9 @@ impl MachineRuntime {
             wake_failure: Mutex::new(None),
             projects: Mutex::new(Vec::new()),
             adding: Mutex::new(Vec::new()),
+            tailnet_join: Mutex::new(None),
+            joining_tailnet: tokio::sync::Mutex::new(()),
+            tailnet_cancel: tokio::sync::Notify::new(),
         };
         if let Some(shell) = shell {
             this.set_projects_from(&shell);
@@ -555,6 +564,8 @@ impl MachineRuntime {
             &record.watchdog_secret,
             &provision::snapshot_name(&record.name, &record.id),
             false,
+            // Never the Tailscale key: an upgrade leaves a machine's tailnet login as it is.
+            None,
             false,
         )
         .await?;

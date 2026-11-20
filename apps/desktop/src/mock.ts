@@ -4,22 +4,45 @@
 // ?projects=0|error (T3 Code has no projects with a remote / listing them fails)
 // ?snapshots=0|error|slow (no saved Boat snapshots / listing them fails / takes 30s)
 // ?ready=1 (a new machine comes up in T3 Code with its agents signed in and acme on it, as the website shows it)
+// ?tailscale=browser (Settings › Tailscale is "sign in with your browser": new machines open a sign-in page,
+//   any machine can Connect; t3-main and side-quest are on the tailnet, the others not yet)
+// ?tailscale=1 or key (an auth key is saved and the mode is "key": new machines join with it)
 import type { Backend } from "./api";
 import { timeLapse } from "./pixel/clock";
-import type { CommandArgs, CommandName, LocalProject, SavedSnapshot, MachineDetails, MachineProject, MachineView, Setup, UiState } from "./types";
+import type {
+  CommandArgs,
+  CommandName,
+  LocalProject,
+  MachineDetails,
+  MachineProject,
+  MachineView,
+  SavedSnapshot,
+  Setup,
+  TailscaleMode,
+  UiState,
+} from "./types";
 
 const params = new URLSearchParams(location.search);
 
-type Seed = Omit<MachineView, "countdown" | "signedOut" | "projects" | "keepAwakeUntil" | "keepAwakeForever"> &
-  Partial<Pick<MachineView, "countdown" | "signedOut" | "projects">>;
+type Seed = Omit<
+  MachineView,
+  "countdown" | "signedOut" | "projects" | "keepAwakeUntil" | "keepAwakeForever" | "tailscale" | "tailscaleJoin"
+> &
+  Partial<Pick<MachineView, "countdown" | "signedOut" | "projects" | "tailscale">>;
 const machine = (m: Seed): MachineView => ({
   countdown: null,
   signedOut: [],
   projects: [],
   keepAwakeUntil: null,
   keepAwakeForever: false,
+  tailscale: false,
+  tailscaleJoin: null,
   ...m,
 });
+
+const TAILSCALE_PARAM = params.get("tailscale");
+const tailscaleMode: TailscaleMode =
+  TAILSCALE_PARAM === "browser" ? "browser" : TAILSCALE_PARAM === "1" || TAILSCALE_PARAM === "key" ? "key" : "off";
 
 const onMachine = (title: string, repoKey: string): MachineProject => ({ id: title, title, repoKey, status: null });
 
@@ -66,6 +89,7 @@ const seedMachines: MachineView[] = [
     state: "working",
     detail: "Working · 2 threads · 3 subagents",
     paired: true,
+    tailscale: true,
     projects: [onMachine("t3code", "github.com/pingdotgg/t3code"), onMachine("website", "github.com/you/website")],
   }),
   machine({
@@ -75,6 +99,7 @@ const seedMachines: MachineView[] = [
     state: "idle",
     ...idle(),
     paired: true,
+    tailscale: true,
     signedOut: ["Claude", "Codex"],
   }),
   machine({ id: "sb_02bb", name: "scratch", size: "small", state: "idle", detail: "Idle · not in T3 Code yet", paired: false }),
@@ -118,8 +143,9 @@ function seed(): UiState {
     account: { identifier: "you@example.com", plan: "Pro" },
     machines: structuredClone(machines),
     costs: { today: 0.42, month: 12.8, startsToday: 3, startsLimit: 50 },
-    settings: { startAtLogin: true },
+    settings: { startAtLogin: true, tailscale: tailscaleMode },
     mcp: params.get("mcp") === "mixed" ? { claudeCode: true, codex: null } : { claudeCode: false, codex: false },
+    tailscale: { configured: tailscaleMode === "key" },
     sizes: [
       { id: "small", spec: "2 vCPU · 4 GB", hourly: 0.018 },
       { id: "default", spec: "4 vCPU · 8 GB", hourly: 0.036 },
@@ -166,6 +192,9 @@ function create(): MockBackend {
     return m;
   };
 
+  /** Bumped by a cancel: a join of an older run stops where it is. */
+  const joinRuns: Record<string, number> = {};
+
   const setupOrder: Setup[] = ["installBoat", "signInBoat", "installT3", "ready"];
 
   const handlers: { [C in CommandName]: (a: CommandArgs<C>) => Promise<unknown> } = {
@@ -190,6 +219,7 @@ function create(): MockBackend {
               id,
               state: "idle",
               ...idle(),
+              tailscale: state.settings.tailscale === "key" && state.tailscale.configured,
               ...(params.get("ready") === "1"
                 ? { paired: true, projects: projects?.length ? [] : [onMachine("acme", "github.com/you/acme")] }
                 : { signedOut: ["Claude", "Codex"] }),
@@ -198,6 +228,8 @@ function create(): MockBackend {
       );
       state.costs.startsToday += 1;
       emit();
+      // browser mode: the sign-in page opens once it is up, never during the create
+      if (state.settings.tailscale === "browser") void handlers.tailscale_connect({ id }).catch(() => {});
       for (const p of projects ?? []) await handlers.add_project({ id, projectId: p });
     },
 
@@ -342,6 +374,50 @@ function create(): MockBackend {
 
     async update_settings({ settings }) {
       state.settings = settings;
+      emit();
+    },
+
+    // Starting, then the sign-in page (the user clicks Connect there about 3s later), then on the tailnet.
+    async tailscale_connect({ id }) {
+      const join = find(id).tailscaleJoin;
+      if (join && join.state !== "error") throw "already connecting to your tailnet; finish the sign-in in the browser";
+      const run = (joinRuns[id] = (joinRuns[id] ?? 0) + 1);
+      const live = () => joinRuns[id] === run && state.machines.some((m) => m.id === id);
+      patch(id, { tailscaleJoin: { state: "starting" } });
+      if (find(id).state === "asleep") await handlers.wake_machine({ id });
+      await wait(1200);
+      if (!live()) return false;
+      const url = `https://login.tailscale.com/a/${Math.random().toString(16).slice(2, 14)}`;
+      patch(id, { tailscaleJoin: { state: "waitingForSignIn", url } });
+      console.info("[mock] open", url);
+      await wait(3000);
+      if (!live()) return false;
+      patch(id, { tailscale: true, tailscaleJoin: null });
+      return true;
+    },
+
+    async tailscale_open_sign_in({ id }) {
+      const join = find(id).tailscaleJoin;
+      if (join?.state !== "waitingForSignIn" || !join.url) throw "it isn't waiting for a Tailscale sign-in";
+      console.info("[mock] open", join.url);
+    },
+
+    async tailscale_cancel({ id }) {
+      joinRuns[id] = (joinRuns[id] ?? 0) + 1;
+      patch(id, { tailscaleJoin: null });
+    },
+
+    async set_tailscale_key({ key }) {
+      await wait(400);
+      if (!key.trim().startsWith("tskey-")) throw "that doesn't look like a Tailscale auth key (they start with tskey-)";
+      state.tailscale = { configured: true };
+      state.settings = { ...state.settings, tailscale: "key" };
+      emit();
+    },
+
+    async remove_tailscale_key() {
+      await wait(300);
+      state.tailscale = { configured: false };
       emit();
     },
 

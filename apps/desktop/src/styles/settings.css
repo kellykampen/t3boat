@@ -139,3 +139,31 @@
 .account-email:hover {
   color: var(--fg);
 }
+
+/* ── settings: tailscale ─────────────────────────────── */
+
+.tailscale-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+.prompt-input.tailscale-input {
+  height: 30px;
+  padding: 0 10px;
+}
+.tailscale-input input {
+  font-size: 12px;
+}
+/* saved: the status on a line of its own, Replace / Remove under it */
+.tailscale-row.is-saved {
+  grid-template-columns: auto auto 1fr;
+  row-gap: 6px;
+}
+.tailscale-row.is-saved .mcp-added {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.tailscale-row.is-replacing {
+  grid-template-columns: 1fr auto auto;
+}

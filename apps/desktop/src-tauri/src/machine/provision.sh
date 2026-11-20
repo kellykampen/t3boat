@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Runs on a Boat sandbox, as `user`. Idempotent; also used to upgrade a machine.
-#   T3BOAT_SECRET=<watchdog-secret> provision.sh <t3-version> <sleep-after-secs> <snapshot-name> <mint-upstream-token:0|1> <name> <fresh-from-snapshot:0|1>
+#   T3BOAT_SECRET=<watchdog-secret> [T3BOAT_TAILSCALE_KEY_FILE=<path>] \
+#     provision.sh <t3-version> <sleep-after-secs> <snapshot-name> <mint-upstream-token:0|1> <name> \
+#     <fresh-from-snapshot:0|1>
 # Expects watchdog.mjs next to it. Prints one JSON line: {"environmentId", "upstreamToken"?}.
+# T3BOAT_TAILSCALE_KEY_FILE: a file holding a Tailscale auth key; set only when creating a
+# machine with Tailscale on. The key never appears in an argument list.
 set -euo pipefail
 
 version="$1" sleep_after="$2" snapshot="$3" mint_upstream="$4" name="$5" fresh="$6"
@@ -101,6 +105,51 @@ UNIT
 systemctl --user daemon-reload
 systemctl --user enable t3boat-watchdog.service >/dev/null 2>&1
 systemctl --user restart t3boat-watchdog.service
+
+# Tailscale. With a key: installed and joined to the user's tailnet with Tailscale SSH, unless
+# already logged in. Without one (every upgrade): left exactly as it is, but for one case. The
+# owner marker names the machine that joined (its snapshot name, unique per machine) and lives
+# with tailscaled's own state, so it travels exactly when that state does. A disk copied from
+# another machine carries that machine's node key: its state is wiped here, on the machine only.
+# Never `tailscale logout`: that would expire the key the original machine still uses and take
+# it off the tailnet. Joined anew only with a key. No --accept-routes: a tailnet route over
+# Boat's own networks (10.77.0.0/16, 192.168.122.0/24) would cut the machine off.
+ts_key="${T3BOAT_TAILSCALE_KEY_FILE:-}"
+ts_dir=/var/lib/tailscale
+ts_owner="$ts_dir/t3boat-owner"
+ts_state() {
+  sudo tailscale status --json 2>/dev/null \
+    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).BackendState||"")}catch{}})' \
+    || true
+}
+if sudo test -f "$ts_owner" && [ "$(sudo cat "$ts_owner")" != "$snapshot" ]; then
+  sudo systemctl stop tailscaled >/dev/null 2>&1 || true
+  sudo rm -rf "$ts_dir"
+  # Started again (as a new, logged-out node) only below, with a key.
+fi
+if [ -n "$ts_key" ]; then
+  if ! command -v tailscale >/dev/null; then
+    if ! curl -fsSL https://tailscale.com/install.sh | sh >"$boat_dir/tailscale-install.log" 2>&1; then
+      echo "Tailscale install failed" >&2
+      tail -n 40 "$boat_dir/tailscale-install.log" >&2
+      exit 1
+    fi
+  fi
+  if ! sudo systemctl enable --now tailscaled >/dev/null 2>&1; then
+    echo "Tailscale: tailscaled did not start" >&2
+    exit 1
+  fi
+  case "$(ts_state)" in
+    Running | Starting) ;;
+    *)
+      if ! sudo tailscale up --auth-key="file:$ts_key" --hostname="t3boat-$name" --ssh --timeout=2m >&2; then
+        echo "Tailscale: joining the tailnet failed; check the auth key in t3boat's Settings (reusable, pre-authorized, not expired)" >&2
+        exit 1
+      fi
+      ;;
+  esac
+  echo "$snapshot" | sudo tee "$ts_owner" >/dev/null
+fi
 
 upstream_token=""
 if [ "$mint_upstream" = 1 ]; then

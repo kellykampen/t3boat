@@ -39,6 +39,18 @@ interface MachineView {
                        // there. repoKey = T3's repository key. Paired with none → "No projects yet · Add one"
   keepAwakeUntil: number | null; // when a "keep awake" runs out (unix ms); null when off or until stopped
   keepAwakeForever: boolean; // kept awake until stopped: no auto sleep
+  tailscale: boolean;  // it is on the user's tailnet as `t3boat-<name>` (Tailscale SSH): joined when
+                       // created (key mode) or with a browser sign-in. List: a "tailnet" chip.
+                       // Details → other devices: the hostname + "Copy ssh" (`ssh user@t3boat-<name>`);
+                       // false → Connect (`tailscale_connect`) unless settings.tailscale is "off",
+                       // else "Tailscale: off" linking to Settings
+  tailscaleJoin:       // a browser sign-in to the tailnet (`tailscale_connect`), else null
+    | { state: "starting" }                         // waking it, installing Tailscale, starting `tailscale up`
+    | { state: "waitingForSignIn"; url: string | null } // the sign-in page is open in the browser: "Waiting for
+                       // sign-in" + Open link (`tailscale_open_sign_in`) + Cancel (`tailscale_cancel`);
+                       // url null: a tailnet admin must approve the device instead
+    | { state: "error"; message: string }           // the last join failed: message + "Try again"
+    | null;            // List: a dots chip while starting/waiting
 }
 
 interface UiState {
@@ -49,11 +61,19 @@ interface UiState {
   machines: MachineView[];
   costs: { today: number; month: number; startsToday: number; startsLimit: number }; // dollars; today/month
                                    // include machines deleted and sandboxes replaced by a restore in that period
-  settings: { startAtLogin: boolean };
+  settings: { startAtLogin: boolean; tailscale: "off" | "browser" | "key" };
+                                   // tailscale: how machines join the tailnet. Settings → Tailscale is a
+                                   // three-way choice: Off (default) · Browser (recommended: each new machine
+                                   // opens a sign-in page once created) · Auth key (advanced: the key UI).
+                                   // A state file from before the choice existed, with a key saved, reads "key"
   sizes: { id: string; spec: string; hourly: number }[]; // e.g. {id:"small", spec:"2 vCPU · 4 GB", hourly:0.018}
   mcp: { claudeCode: boolean | null; codex: boolean | null };
                                    // t3boat registered as an MCP server in that CLI; null = CLI not installed
                                    // (Settings → "Coding agents" disables its button with a hint)
+  tailscale: { configured: boolean }; // a Tailscale auth key is saved in the OS keychain (used only in
+                                   // "key" mode); the key itself never reaches the UI. In key mode Settings
+                                   // shows a password field + Save when false; "Key saved · new machines
+                                   // join with it" + Replace (the field again) + Remove when true
 }
 ```
 
@@ -79,7 +99,7 @@ interface MachineDetails {
 | command | args | notes |
 |---|---|---|
 | `get_state` | – | |
-| `create_machine` | `{ name, size, projects?, snapshot? }` | resolves when done (~1 min); a `creating` row shows progress meanwhile; at the end T3 Code shows its own "Add backend?" dialog. `projects`: `local_projects` ids, added one after another once it is up (progress in `projects`; a failure notifies). `snapshot`: a saved Boat snapshot name (lowercase letters, digits, dashes; not starting with a dash) or share code (`bsh_` + letters and digits) to start the disk from; absent or empty starts from Boat's base image. Anything else rejects before Boat is called. Its files, repos and tools stay, but T3's data (`~/.t3/userdata`: identity, auth secrets, chats) and t3boat's watchdog state are wiped, so the machine has its own identity even when the snapshot is another machine's |
+| `create_machine` | `{ name, size, projects?, snapshot? }` | resolves when done (~1 min); a `creating` row shows progress meanwhile; at the end T3 Code shows its own "Add backend?" dialog. In browser mode it then starts `tailscale_connect` for the new machine by itself (never part of the create: that would wait on a person); a failure there notifies and shows in `tailscaleJoin`. `projects`: `local_projects` ids, added one after another once it is up (progress in `projects`; a failure notifies). `snapshot`: a saved Boat snapshot name (lowercase letters, digits, dashes; not starting with a dash) or share code (`bsh_` + letters and digits) to start the disk from; absent or empty starts from Boat's base image. Anything else rejects before Boat is called. Its files, repos and tools stay, but T3's data (`~/.t3/userdata`: identity, auth secrets, chats) and t3boat's watchdog state are wiped, so the machine has its own identity even when the snapshot is another machine's |
 | `local_projects` | – | → `{ id, title, path, repoKey, icon: string \| null }[]`: this computer's T3 Code projects that have a git remote (what T3's own "Add to another machine" accepts), pinned first then most recent, read from T3 Code's server with t3boat's own session. `icon`: favicon as a `data:` URL, null if none (UI shows a letter tile). A project counts as on a machine when one of its `projects` has the same `repoKey` |
 | `list_snapshots` | – | → `{ name, createdAt, sourceSandboxId: string \| null, status }[]`: the user's saved (named) Boat snapshots a new machine can start from, from `boat snapshots --all` (every page). Ready ones only (`status` is always `"ready"`), newest first, each name once. `createdAt`: ISO 8601. `sourceSandboxId`: the sandbox it was taken of, a machine's `id` when it was one of t3boat's; null when Boat doesn't say. Names `t3boat-<machine>-<id>` are t3boat's own sleep snapshots (UI groups them as "your machines"). The UI offers these in `create_machine`'s snapshot field but still takes a typed name or share code; a rejection only shows a note there and never blocks creating a machine |
 | `add_project` | `{ id, projectId }` | adds that project the way T3 Code's "Add to another machine" does: `projectClone.start` on the machine (clone over HTTPS from its remote, registered as a T3 project, progress in T3 Code too), then its `.env` files via `projects.writeFile`. Resolves once cloned; not a tracked action, the machine's `projects` show progress. A clone the git host refuses rejects with a pointer to T3 Code's Settings → Source control for that machine |
@@ -96,6 +116,11 @@ interface MachineDetails {
 | `get_machine_details` | `{ id }` | → `MachineDetails`; should work while asleep (from cache / Boat API, without waking it). Rejection = toast, last data stays |
 | `add_mcp` | `{ client }` | `"claudeCode" \| "codex"`: registers t3boat as an MCP server in that CLI's config so its agents can control t3boat; resolves when done, then `UiState.mcp[client]` is `true` |
 | `update_settings` | `{ settings }` | full settings object |
+| `set_tailscale_key` | `{ key }` | saves a Tailscale auth key to the OS keychain (never a file, the state JSON, logs or messages) and sets `settings.tailscale` to "key"; rejects a value not shaped like `tskey-…`. Machines created from then on (in key mode) install Tailscale and join the tailnet as `t3boat-<name>` with Tailscale SSH; a failure there fails the create. Wakes and upgrades never use the key |
+| `tailscale_connect` | `{ id }` | → `boolean`. Joins the machine to the tailnet by signing in with the browser, on any machine (old ones too, in any mode): wakes it and keeps it awake meanwhile; on the machine installs Tailscale if missing, wipes a copied disk's foreign node (owner marker) and, unless already on a tailnet, starts `tailscale up --hostname=t3boat-<name> --ssh` (no key); opens its sign-in page here; waits up to 10 min for the node to run, then writes the owner marker and sets `tailscale`. Progress is `tailscaleJoin`. Resolves `true` once on the tailnet, `false` if cancelled; rejects when it fails (also in `tailscaleJoin`) or while a join is already running. Not a tracked action: the row stays usable |
+| `tailscale_open_sign_in` | `{ id }` | opens the sign-in page of a `waitingForSignIn` join again |
+| `tailscale_cancel` | `{ id }` | ends a join; its `tailscale up` on the machine stops; `tailscaleJoin` back to null |
+| `remove_tailscale_key` | – | deletes it from the keychain; machines already on the tailnet stay there. Deleting a machine that joined logs it out first when it is awake (asleep: its offline node stays until removed in Tailscale's admin console) |
 | `setup_action` | `{ action }` | `"installBoat" \| "signInBoat" \| "installT3" \| "recheck"` |
 | `quit_app` | – | |
 

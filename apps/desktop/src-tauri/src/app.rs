@@ -2,14 +2,17 @@
 //! both drive it.
 
 use crate::boat::{Boat, Starts};
+use crate::machine::tailnet::TailnetJoin;
 use crate::machine::{provision, Event, MachineRuntime, Power, Shared, WatchdogPhase};
 use crate::proxy;
-use crate::store::{Settings, Spend, State, Store};
+use crate::store::{Settings, Spend, State, Store, TailscaleMode};
 use crate::t3desktop::T3Desktop;
+use crate::tailscale::{self, AuthKey};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
@@ -73,6 +76,10 @@ pub struct MachineView {
     /// When a "keep awake" runs out (unix ms); none when off or until stopped.
     pub keep_awake_until: Option<u64>,
     pub keep_awake_forever: bool,
+    /// It joined the user's tailnet as `t3boat-<name>` (when created, or with a browser sign-in).
+    pub tailscale: bool,
+    /// A browser sign-in to the tailnet in progress, or how the last one failed.
+    pub tailscale_join: Option<TailnetJoin>,
 }
 
 /// `detail` as `template` with `{left}` filled in: the time left until `ends_at` (unix ms).
@@ -142,6 +149,8 @@ pub struct App {
     retired_ports: Mutex<Vec<u16>>,
     /// Sandboxes of creates the app didn't live to finish, until deleted.
     leftover_sandboxes: Mutex<Vec<String>>,
+    /// A Tailscale auth key is in the keychain: `State::tailscale_key`.
+    tailscale_key: AtomicBool,
 }
 
 impl App {
@@ -180,6 +189,7 @@ impl App {
             spend: Mutex::new(state.spend),
             retired_ports: Mutex::new(state.retired_ports),
             leftover_sandboxes: Mutex::new(leftover),
+            tailscale_key: AtomicBool::new(state.tailscale_key),
         });
         for record in state.machines {
             app.spawn(app.runtime(record));
@@ -268,6 +278,7 @@ impl App {
             spend,
             retired_ports,
             pending_sandboxes,
+            tailscale_key: self.tailscale_configured(),
         };
         if let Err(e) = self.store.save(&state) {
             tracing::error!("saving state: {e:#}");
@@ -277,6 +288,51 @@ impl App {
     pub fn update_settings(&self, settings: Settings) {
         *self.shared.settings.write().unwrap() = settings;
         self.shared.persist();
+    }
+
+    /// New machines join the user's tailnet.
+    pub fn tailscale_configured(&self) -> bool {
+        self.tailscale_key.load(Ordering::Relaxed)
+    }
+
+    pub fn tailscale_mode(&self) -> TailscaleMode {
+        self.settings().tailscale
+    }
+
+    /// Saves the key to the keychain; machines created from now on join with it ("key" mode).
+    pub async fn set_tailscale_key(&self, key: &str) -> Result<()> {
+        let key = AuthKey::parse(key)?;
+        tokio::task::spawn_blocking(move || tailscale::save(&key)).await??;
+        if self.tailscale_mode() != TailscaleMode::Key {
+            self.update_settings(Settings { tailscale: TailscaleMode::Key, ..self.settings() });
+        }
+        self.set_tailscale_flag(true);
+        Ok(())
+    }
+
+    /// Machines already on the tailnet stay there.
+    pub async fn remove_tailscale_key(&self) -> Result<()> {
+        tokio::task::spawn_blocking(tailscale::remove).await??;
+        self.set_tailscale_flag(false);
+        Ok(())
+    }
+
+    fn set_tailscale_flag(&self, on: bool) {
+        self.tailscale_key.store(on, Ordering::Relaxed);
+        self.shared.persist();
+        self.shared.changed();
+    }
+
+    /// The key a new machine joins with, in "key" mode; read from the keychain only when one
+    /// was saved.
+    async fn tailscale_key(&self) -> Result<Option<AuthKey>> {
+        if self.tailscale_mode() != TailscaleMode::Key || !self.tailscale_configured() {
+            return Ok(None);
+        }
+        match tokio::task::spawn_blocking(tailscale::load).await?? {
+            Some(key) => Ok(Some(key)),
+            None => bail!("the Tailscale key is no longer in the keychain; save it again in Settings, or remove it"),
+        }
     }
 
     /// Claims the name and a local port for a new machine, so concurrent creates never share
@@ -333,6 +389,8 @@ impl App {
         if let Some(s) = snapshot {
             provision::check_start_snapshot(s)?;
         }
+        // Before any sandbox exists: a keychain problem costs nothing.
+        let tailscale = self.tailscale_key().await?;
         let port = self.reserve(name)?;
         self.shared.changed();
         let result = async {
@@ -344,6 +402,7 @@ impl App {
                 snapshot,
                 &version,
                 port,
+                tailscale.as_ref(),
                 |sandbox| self.set_creating_sandbox(name, sandbox),
                 |step| self.set_creating_step(name, step),
             )
@@ -379,6 +438,15 @@ impl App {
                 }
             }
         });
+        // Never during the create: that would wait on a person. The sign-in page opens as it is up.
+        if self.tailscale_mode() == TailscaleMode::Browser {
+            let (app, m) = (self.clone(), machine.clone());
+            tokio::spawn(async move {
+                if let Err(e) = app.connect_tailnet(&m).await {
+                    app.shared.notify(format!("{} isn't on your tailnet", m.record().name), format!("{e:#}"));
+                }
+            });
+        }
         // The machine exists either way; its row still offers "Add to T3 Code".
         if let Err(e) = self.pair(&machine) {
             self.shared.notify(format!("Couldn't open T3 Code for {name}"), format!("{e:#}; use Add to T3 Code"));
@@ -417,6 +485,20 @@ impl App {
         Ok(project)
     }
 
+    /// Joins the machine to the user's tailnet with a browser sign-in: Tailscale's page opens
+    /// here. True once on it (up to 10 min), false if cancelled. Any machine, old ones too.
+    pub async fn connect_tailnet(&self, machine: &MachineRuntime) -> Result<bool> {
+        machine.join_tailnet().await
+    }
+
+    /// Opens the sign-in page of the machine's join again (closed by mistake, say).
+    pub fn open_tailnet_sign_in(&self, machine: &MachineRuntime) -> Result<()> {
+        match machine.tailnet_sign_in_url() {
+            Some(url) => open_url(&url),
+            None => bail!("{} isn't waiting for a Tailscale sign-in", machine.record().name),
+        }
+    }
+
     /// Opens T3 Code's own "add backend" confirmation for this machine.
     pub fn pair(&self, machine: &MachineRuntime) -> Result<()> {
         let code = machine.auth.new_pairing_code();
@@ -434,12 +516,21 @@ impl App {
         if !discard {
             machine.check_idle_before_delete().await?;
         }
+        machine.cancel_tailnet_join();
         let boat = &self.shared.boat;
         let record = {
             // Held until retired: a later wake then sees Missing, and none restores meanwhile.
             let _waking = machine.waking.lock().await;
             // Read under the lock: a wake may have restored it onto a new sandbox.
             let record = machine.record();
+            // Takes the node off the tailnet, best effort. Asleep, it stays there offline until
+            // removed in Tailscale's admin console: waking it just for this would cost a start.
+            if record.tailscale
+                && machine.power() == Power::Running
+                && let Err(e) = boat.exec_ok(&record.sandbox_id, tailscale::LOGOUT_SCRIPT, 60).await
+            {
+                tracing::warn!("logging {} out of the tailnet: {e:#}", record.id);
+            }
             if let Err(e) = boat.delete(&record.sandbox_id).await {
                 // Already gone on Boat is fine; anything else keeps the machine.
                 if !boat.confirmed_gone(&record.sandbox_id).await {
@@ -494,6 +585,8 @@ impl App {
                 projects: Vec::new(),
                 keep_awake_until: None,
                 keep_awake_forever: false,
+                tailscale: false,
+                tailscale_join: None,
             });
         }
         views
@@ -715,6 +808,8 @@ fn view(m: &MachineRuntime) -> MachineView {
             .filter(|w| w.keep_awake_secs > 0)
             .map(|w| unix_ms_after(w.received, w.keep_awake_secs)),
         keep_awake_forever: running_watchdog.is_some_and(|w| w.keep_awake_forever),
+        tailscale: r.tailscale,
+        tailscale_join: m.tailnet_join(),
     }
 }
 

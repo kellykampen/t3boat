@@ -42,6 +42,9 @@ pub struct Machine {
     /// T3 Connect is on there: other devices reach it with the user's T3 account.
     #[serde(default)]
     pub connect: bool,
+    /// Joined the user's tailnet when created: a delete logs it out first.
+    #[serde(default)]
+    pub tailscale: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -56,12 +59,27 @@ pub struct LinkToken {
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub start_at_login: bool,
+    /// How machines join the user's tailnet. A state file from before it existed, with a key
+    /// saved, reads as `Key`: see `Store::load`.
+    pub tailscale: TailscaleMode,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { start_at_login: true }
+        Self { start_at_login: true, tailscale: TailscaleMode::Off }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TailscaleMode {
+    /// Machines stay off the tailnet.
+    #[default]
+    Off,
+    /// Each new machine opens Tailscale's sign-in page here and joins as the user who signs in.
+    Browser,
+    /// New machines join with the auth key saved in the keychain, during their create.
+    Key,
 }
 
 /// One sandbox's spend as last looked up. Kept after the sandbox is gone (its machine deleted, or
@@ -93,6 +111,9 @@ pub struct State {
     /// Sandboxes of creates still running: deleted at the next start if the app quit or crashed
     /// before the create finished.
     pub pending_sandboxes: Vec<String>,
+    /// A Tailscale auth key is in the keychain. Only this flag is kept here, never the key, so
+    /// that without one nothing reads the keychain at all.
+    pub tailscale_key: bool,
 }
 
 pub struct Store {
@@ -108,7 +129,7 @@ impl Store {
 
     pub fn load(&self) -> Result<State> {
         match std::fs::read(&self.path) {
-            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Ok(bytes) => parse(&bytes),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
             Err(e) => Err(e.into()),
         }
@@ -118,6 +139,17 @@ impl Store {
     pub fn save(&self, state: &State) -> Result<()> {
         write_private(&self.path, &serde_json::to_vec_pretty(state)?)
     }
+}
+
+/// A key saved before the Tailscale mode existed keeps working: the mode is then "key".
+fn parse(bytes: &[u8]) -> Result<State> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let had_mode = value["settings"].get("tailscale").is_some();
+    let mut state: State = serde_json::from_value(value)?;
+    if !had_mode && state.tailscale_key {
+        state.settings.tailscale = TailscaleMode::Key;
+    }
+    Ok(state)
 }
 
 /// Atomic write of a file only its owner can read, never readable by others even briefly.
@@ -139,5 +171,22 @@ pub fn sweep(dir: &Path, keep: &HashSet<PathBuf>) {
     let entries = std::fs::read_dir(dir).into_iter().flatten().flatten();
     for path in entries.map(|e| e.path()).filter(|p| !keep.contains(p)) {
         let _ = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse, TailscaleMode};
+
+    #[test]
+    fn a_saved_key_from_before_the_mode_means_key() {
+        let old = br#"{"settings":{"startAtLogin":true},"tailscaleKey":true}"#;
+        assert_eq!(parse(old).unwrap().settings.tailscale, TailscaleMode::Key);
+        let no_key = br#"{"settings":{"startAtLogin":false}}"#;
+        assert_eq!(parse(no_key).unwrap().settings.tailscale, TailscaleMode::Off);
+        // Chosen since: kept, the key notwithstanding.
+        let chosen = br#"{"settings":{"tailscale":"browser"},"tailscaleKey":true}"#;
+        assert_eq!(parse(chosen).unwrap().settings.tailscale, TailscaleMode::Browser);
+        assert_eq!(parse(b"{}").unwrap().settings.tailscale, TailscaleMode::Off);
     }
 }

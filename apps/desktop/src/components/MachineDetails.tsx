@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMachineDetails, useLatestThread } from "../api";
-import type { MachineDetails as Details, LocalProject, MachineView, Size } from "../types";
+import type { MachineDetails as Details, LocalProject, MachineView, Size, TailscaleMode } from "../types";
 import {
   ACTIONS,
   autoSleep,
+  canJoinTailnet,
   duration,
   hourly,
   STAY_AWAKE,
@@ -18,6 +19,8 @@ import {
   seedOf,
   shortDate,
   signInTo,
+  tailnetHost,
+  tailnetSsh,
   sizeOf,
   timeLeft,
   type Action,
@@ -38,10 +41,13 @@ interface Props {
   deleteError: string | null;
   /** opened from the row's "Add a project…" or "Add one": start with the project picker open */
   pickProject: boolean;
+  /** Settings › Tailscale */
+  tailscaleMode: TailscaleMode;
   onAction: (a: Action) => void;
   onAddProject: (p: LocalProject) => void;
   onDismissDeleteError: () => void;
   onError: (text: string) => void;
+  onOpenSettings: () => void;
   onBack: () => void;
 }
 
@@ -52,10 +58,12 @@ export function MachineDetails({
   pending,
   deleteError,
   pickProject,
+  tailscaleMode,
   onAction,
   onAddProject,
   onDismissDeleteError,
   onError,
+  onOpenSettings,
   onBack,
 }: Props) {
   const d = useMachineDetails(m.id, version, onError);
@@ -75,7 +83,14 @@ export function MachineDetails({
         <Glance m={m} size={sizeOf(sizes, m.size)} d={d} />
         {gone ? null : <Power m={m} busy={busy} onAction={onAction} />}
         <Agents m={m} d={d} pending={pending} onAction={onAction} />
-        <Connect m={m} d={d} pending={pending} onAction={onAction} />
+        <Connect
+          m={m}
+          d={d}
+          pending={pending}
+          tailscaleMode={tailscaleMode}
+          onAction={onAction}
+          onOpenSettings={onOpenSettings}
+        />
         <Projects m={m} pickProject={pickProject} onAddProject={onAddProject} />
         <MachineMore
           m={m}
@@ -334,17 +349,21 @@ function Agents({
   );
 }
 
-/** T3 Connect: the user's phone or a browser reach the machine with their T3 account. */
+/** T3 Connect: the user's phone or a browser reach the machine with their T3 account. Tailscale: their tailnet. */
 function Connect({
   m,
   d,
   pending,
+  tailscaleMode,
   onAction,
+  onOpenSettings,
 }: {
   m: MachineView;
   d: Details | null;
   pending: string | null;
+  tailscaleMode: TailscaleMode;
   onAction: (a: Action) => void;
+  onOpenSettings: () => void;
 }) {
   const running = pending === ACTIONS.connect.busy;
   return (
@@ -384,8 +403,118 @@ function Connect({
         ) : (
           <Skeleton rows={1} />
         )}
+        <Tailscale m={m} mode={tailscaleMode} onAction={onAction} onOpenSettings={onOpenSettings} />
       </ul>
     </Section>
+  );
+}
+
+/** Whether it's on the user's tailnet, and joining it with a browser sign-in (any machine, old ones too). */
+function Tailscale({
+  m,
+  mode,
+  onAction,
+  onOpenSettings,
+}: {
+  m: MachineView;
+  mode: TailscaleMode;
+  onAction: (a: Action) => void;
+  onOpenSettings: () => void;
+}) {
+  const [copied, setCopied] = useState<"ok" | "failed" | null>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(null), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const ssh = tailnetSsh(m);
+  const copy = () =>
+    navigator.clipboard.writeText(ssh).then(
+      () => setCopied("ok"),
+      () => setCopied("failed"),
+    );
+
+  if (m.tailscale) {
+    return (
+      <li className="line line-tailscale">
+        <span>Tailscale</span>
+        <span className="line-main line-host selectable" title={`On your tailnet as ${tailnetHost(m)}`}>
+          {tailnetHost(m)}
+        </span>
+        <button className="btn btn-sm btn-quiet copy-btn" title={`Copy “${ssh}”`} onClick={copy}>
+          {copied === "ok" ? (
+            <>
+              <Icon name="check" size={10} /> Copied
+            </>
+          ) : copied === "failed" ? (
+            "Couldn't copy"
+          ) : (
+            <>
+              <Icon name="copy" size={10} /> Copy ssh
+            </>
+          )}
+        </button>
+      </li>
+    );
+  }
+  const join = m.tailscaleJoin;
+  if (join?.state === "starting" || join?.state === "waitingForSignIn") {
+    const waiting = join.state === "waitingForSignIn";
+    return (
+      <>
+        <li className="line">
+          <span className="line-main">Tailscale</span>
+          <span className="line-status caption">
+            <Dots /> {!waiting ? "Starting…" : join.url ? "Waiting for sign-in" : "Waiting for approval"}
+          </span>
+          {waiting && join.url ? (
+            <button className="btn btn-sm btn-outline" onClick={() => onAction(ACTIONS.tailnetLink)}>
+              Open link
+            </button>
+          ) : null}
+          <button className="btn btn-link" onClick={() => onAction(ACTIONS.tailnetCancel)}>
+            Cancel
+          </button>
+        </li>
+        <li className="line">
+          <span className="line-main line-dim line-wrap">
+            {!waiting
+              ? "Installing Tailscale; the sign-in page opens next"
+              : join.url
+                ? "Sign in to Tailscale in the browser and click Connect"
+                : "A tailnet admin has to approve the device in Tailscale's admin console"}
+          </span>
+        </li>
+      </>
+    );
+  }
+  if (mode !== "off") {
+    const connect = canJoinTailnet(m, mode);
+    return (
+      <>
+        <li className="line">
+          <span className="line-main">Tailscale</span>
+          <button className="btn btn-sm btn-outline" disabled={!connect} onClick={() => onAction(ACTIONS.tailnet)}>
+            {join?.state === "error" ? "Try again" : "Connect"}
+          </button>
+        </li>
+        <li className="line">
+          <span className={`line-main line-wrap ${join?.state === "error" ? "line-error" : "line-dim"}`}>
+            {join?.state === "error"
+              ? `Couldn't join: ${join.message}`
+              : `Sign in with your browser; it joins as ${tailnetHost(m)} with Tailscale SSH`}
+          </span>
+        </li>
+      </>
+    );
+  }
+  return (
+    <li className="line">
+      <span className="line-main line-dim">Tailscale: off</span>
+      <button className="btn btn-link" onClick={onOpenSettings}>
+        Set up in Settings
+      </button>
+    </li>
   );
 }
 

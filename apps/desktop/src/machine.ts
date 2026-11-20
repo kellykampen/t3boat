@@ -1,4 +1,4 @@
-import type { MachineState, MachineView, Size } from "./types";
+import type { MachineState, MachineView, Size, TailscaleMode } from "./types";
 
 const TAGS: Record<MachineState, string> = {
   working: "working",
@@ -17,6 +17,11 @@ export const stateTag = (s: MachineState) => TAGS[s];
 /** Stable key: creating rows have no id yet. */
 export const machineKey = (m: MachineView) => m.id || `new:${m.name}`;
 
+/** Its name on the user's tailnet (provision.sh joins it with `--hostname=t3boat-<name>`). */
+export const tailnetHost = (m: MachineView) => `t3boat-${m.name}`;
+/** Tailscale SSH maps to the machine's `user` account (README → Tailscale). */
+export const tailnetSsh = (m: MachineView) => `ssh user@${tailnetHost(m)}`;
+
 export function seedOf(key: string): number {
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
@@ -32,6 +37,8 @@ export type Action = {
 } & (
   | { cmd: "open_machine"; thread?: string }
   | { cmd: "pair_machine" | "wake_machine" | "sleep_machine" | "turn_on_connect" }
+  /** the tailnet's browser sign-in: never a tracked action, its progress is `tailscaleJoin` */
+  | { cmd: "tailscale_connect" | "tailscale_open_sign_in" | "tailscale_cancel" }
   | { cmd: "resize_machine"; size: string }
   /** null = until stopped (auto sleep off), 0 ends it */
   | { cmd: "keep_awake"; minutes: number | null }
@@ -60,6 +67,9 @@ export const ACTIONS = {
   retry: { cmd: "wake_machine", label: "Try waking", busy: "Waking…" },
   sleep: { cmd: "sleep_machine", label: "Sleep now", busy: "Sleeping…" },
   connect: { cmd: "turn_on_connect", label: "Turn on", busy: "Approve in browser…" },
+  tailnet: { cmd: "tailscale_connect", label: "Connect to tailnet", busy: "Connecting…" },
+  tailnetLink: { cmd: "tailscale_open_sign_in", label: "Open link", busy: "Opening…" },
+  tailnetCancel: { cmd: "tailscale_cancel", label: "Cancel", busy: "Cancelling…" },
   remove: { cmd: "delete_machine", label: "Remove", busy: "Removing…", discard: true },
   del: { cmd: "delete_machine", label: "Delete", busy: "Deleting…", discard: false },
   deleteAnyway: { cmd: "delete_machine", label: "Delete anyway", busy: "Deleting…", discard: true },
@@ -115,13 +125,22 @@ export const resizeTo = (size: string): Action => ({
   size,
 });
 
+/** A tailnet sign-in is under way (an error is not: it can be retried). */
+export const joiningTailnet = (m: MachineView) =>
+  m.tailscaleJoin?.state === "starting" || m.tailscaleJoin?.state === "waitingForSignIn";
+
+/** "Connect to tailnet" applies: Tailscale is set up in Settings and the machine isn't on it or joining. */
+export const canJoinTailnet = (m: MachineView, mode: TailscaleMode) =>
+  mode !== "off" && !!m.id && !m.tailscale && !joiningTailnet(m) && !["creating", "missing"].includes(m.state);
+
 /** Secondary actions for the ⋯ menu (delete is always appended by the menu). */
-export function menuActions(m: MachineView, sizes: Size[]): MenuItem[] {
+export function menuActions(m: MachineView, sizes: Size[], tailscale: TailscaleMode): MenuItem[] {
   if (!m.id || m.state === "missing") return [];
   const out: MenuItem[] = [];
   if (m.state === "asleep") out.push(ACTIONS.wake);
   if (m.state === "working" || m.state === "idle") out.push(ACTIONS.sleep);
   out.push(PICK_PROJECT);
+  if (canJoinTailnet(m, tailscale)) out.push(ACTIONS.tailnet);
   if (m.paired) out.push(ACTIONS.repair);
   sizes.filter((s) => s.id !== m.size).forEach((s) => out.push(resizeTo(s.id)));
   return out;

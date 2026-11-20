@@ -89,6 +89,14 @@ struct UiState {
     settings: Settings,
     sizes: &'static [SizeInfo],
     mcp: McpStatus,
+    tailscale: TailscaleStatus,
+}
+
+/// Only whether a key is saved; the key itself never reaches the UI.
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TailscaleStatus {
+    configured: bool,
 }
 
 impl Ui {
@@ -109,6 +117,7 @@ impl Ui {
             settings: app.as_ref().map(|a| a.settings()).unwrap_or_default(),
             sizes: SIZES,
             mcp: self.mcp.lock().unwrap().clone(),
+            tailscale: TailscaleStatus { configured: app.as_ref().is_some_and(|a| a.tailscale_configured()) },
         }
     }
 }
@@ -507,6 +516,40 @@ async fn update_settings(handle: AppHandle, ui: State<'_, Ui>, settings: Setting
     Ok(())
 }
 
+/// Saves the Tailscale auth key to the keychain; new machines join the tailnet with it.
+#[tauri::command]
+async fn set_tailscale_key(ui: State<'_, Ui>, key: String) -> Res {
+    ui.app()?.set_tailscale_key(&key).await.map_err(err)
+}
+
+/// Joins the machine to the user's tailnet with a browser sign-in (wakes it). Progress is in its
+/// `tailscaleJoin`; resolves true once on the tailnet, false if cancelled.
+#[tauri::command]
+async fn tailscale_connect(ui: State<'_, Ui>, id: String) -> Res<bool> {
+    let app = ui.app()?;
+    let machine = app.machine(&id).map_err(err)?;
+    app.connect_tailnet(&machine).await.map_err(err)
+}
+
+/// Opens the sign-in page of a join waiting for one again.
+#[tauri::command]
+fn tailscale_open_sign_in(ui: State<'_, Ui>, id: String) -> Res {
+    let app = ui.app()?;
+    let machine = app.machine(&id).map_err(err)?;
+    app.open_tailnet_sign_in(&machine).map_err(err)
+}
+
+#[tauri::command]
+fn tailscale_cancel(ui: State<'_, Ui>, id: String) -> Res {
+    ui.app()?.machine(&id).map_err(err)?.cancel_tailnet_join();
+    Ok(())
+}
+
+#[tauri::command]
+async fn remove_tailscale_key(ui: State<'_, Ui>) -> Res {
+    ui.app()?.remove_tailscale_key().await.map_err(err)
+}
+
 #[tauri::command]
 async fn setup_action(handle: AppHandle, ui: State<'_, Ui>, action: String) -> Res {
     let set_busy = |busy: bool| {
@@ -608,6 +651,11 @@ pub fn run() {
             get_machine_details,
             latest_thread,
             update_settings,
+            set_tailscale_key,
+            remove_tailscale_key,
+            tailscale_connect,
+            tailscale_open_sign_in,
+            tailscale_cancel,
             setup_action,
             add_mcp,
             quit_app

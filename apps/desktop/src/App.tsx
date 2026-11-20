@@ -146,7 +146,23 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
       .finally(() => setPending((p) => without(p, key)));
   };
 
-  const act = (m: MachineView, a: Action) =>
+  /** The tailnet's browser sign-in: untracked, so the row stays usable while the user is in the browser. */
+  const tailnet = (m: MachineView, cmd: "tailscale_connect" | "tailscale_open_sign_in" | "tailscale_cancel") => {
+    if (cmd === "tailscale_connect") {
+      call("tailscale_connect", { id: m.id }).then(
+        (joined) => joined && toast(`${m.name} is on your tailnet`, "info"),
+        (e) => toast(`${m.name}: ${errorText(e)}`),
+      );
+    } else {
+      call(cmd, { id: m.id }).catch((e) => toast(`${m.name}: ${errorText(e)}`));
+    }
+  };
+
+  const act = (m: MachineView, a: Action) => {
+    if (a.cmd === "tailscale_connect" || a.cmd === "tailscale_open_sign_in" || a.cmd === "tailscale_cancel") {
+      tailnet(m, a.cmd);
+      return;
+    }
     track(m, a.busy, async () => {
       const key = machineKey(m);
       const acceptHint = () => toast(`Switch to T3 Code to accept "${m.name}"`, "info");
@@ -183,8 +199,19 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
           if (a.cmd === "pair_machine") acceptHint();
       }
     });
+  };
 
   const addMcp = (client: McpClient) => call("add_mcp", { client }).catch((e) => toast(errorText(e)));
+  // resolves to whether it worked; the message is a toast
+  const saveTailscaleKey = (key: string) =>
+    call("set_tailscale_key", { key }).then(
+      () => true,
+      (e) => {
+        toast(errorText(e));
+        return false;
+      },
+    );
+  const removeTailscaleKey = () => call("remove_tailscale_key", undefined).catch((e) => toast(errorText(e)));
 
   const create = (name: string, size: string, projects: string[], snapshot?: string) => {
     setView("list");
@@ -214,10 +241,12 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
           pending={pending[machineKey(selected)] ?? null}
           deleteError={deleteErrors[machineKey(selected)] ?? null}
           pickProject={pickProject}
+          tailscaleMode={state.settings.tailscale}
           onAction={(a) => act(selected, a)}
           onAddProject={(p) => addProject(selected, p)}
           onDismissDeleteError={() => setDeleteErrors((d) => without(d, machineKey(selected)))}
           onError={detailsError}
+          onOpenSettings={() => setView("settings")}
           onBack={back}
         />
       ) : view === "new" ? (
@@ -227,6 +256,8 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
           state={state}
           onSave={(settings) => call("update_settings", { settings }).catch((e) => toast(errorText(e)))}
           onAddMcp={addMcp}
+          onSaveTailscaleKey={saveTailscaleKey}
+          onRemoveTailscaleKey={removeTailscaleKey}
           onQuit={() => call("quit_app", undefined).catch((e) => toast(errorText(e)))}
           onBack={back}
         />
@@ -259,6 +290,7 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
                     key={machineKey(m)}
                     machine={m}
                     sizes={state.sizes}
+                    tailscaleMode={state.settings.tailscale}
                     pending={pending[machineKey(m)] ?? null}
                     deleteError={deleteErrors[machineKey(m)] ?? null}
                     onAction={(a) => act(m, a)}

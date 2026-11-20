@@ -448,3 +448,22 @@ button.row-name {
     opacity: 0.45;
   }
 }
+
+/* other devices: Tailscale */
+.line-wrap {
+  white-space: normal;
+  line-height: 1.35;
+  padding: 7px 0;
+}
+.line-host {
+  font: 400 11.5px var(--font-mono);
+  color: var(--muted);
+}
+.copy-btn {
+  flex: none;
+  gap: 5px;
+}
+.line-error {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
