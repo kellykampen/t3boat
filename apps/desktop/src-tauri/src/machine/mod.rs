@@ -566,6 +566,7 @@ impl MachineRuntime {
             false,
             // Never the Tailscale key: an upgrade leaves a machine's tailnet login as it is.
             None,
+            false,
         )
         .await?;
         self.update_record(|m| {

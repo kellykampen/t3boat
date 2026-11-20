@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { UiState } from "../types";
-import { cleanName, hourly, NAME_RE, suggestName } from "../machine";
+import { cleanName, hourly, NAME_RE, SNAPSHOT_RE, suggestName } from "../machine";
 import { Icon } from "./Icons";
 import { ProjectList, useLocalProjects } from "./ProjectPicker";
+import { SnapshotPicker } from "./SnapshotPicker";
 import { SubHeader } from "./SubHeader";
 
 interface Props {
   state: UiState;
   onNameChange: (name: string) => void;
-  onCreate: (name: string, size: string, projects: string[]) => void;
+  onCreate: (name: string, size: string, projects: string[], snapshot?: string) => void;
   onBack: () => void;
 }
 
@@ -20,6 +21,7 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const projects = useLocalProjects();
   const [picked, setPicked] = useState<string[]>([]);
+  const [snapshot, setSnapshot] = useState("");
   const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
   useEffect(() => {
@@ -34,10 +36,13 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
       : taken.includes(name)
         ? "You already have a machine with this name"
         : null;
+  // As the backend checks it: a saved snapshot's name, or a Boat share code.
+  const snapshotProblem =
+    snapshot && !SNAPSHOT_RE.test(snapshot) ? "A snapshot name (a-z, 0-9, -, not starting with -) or a share code (bsh_…)" : null;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!problem && size) onCreate(name, size, picked);
+    if (!problem && !snapshotProblem && size) onCreate(name, size, picked, snapshot || undefined);
   };
 
   return (
@@ -123,9 +128,31 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
           </div>
           <span className="hint">Optional · cloned from git once it's up, .env files included</span>
         </fieldset>
+
+        <div className="field">
+          <label className="caption" htmlFor="machine-snapshot">
+            start from snapshot
+          </label>
+          <SnapshotPicker
+            id="machine-snapshot"
+            describedBy="machine-snapshot-hint"
+            value={snapshot}
+            onChange={setSnapshot}
+            machines={state.machines}
+            invalid={!!snapshotProblem}
+          />
+          <span id="machine-snapshot-hint" className={`hint${snapshotProblem ? " is-error" : ""}`}>
+            {snapshotProblem ??
+              (snapshot.startsWith("bsh_")
+                ? "Share code: someone else's disk. It gets your sessions and project .env files, so only use codes you trust"
+                : snapshot
+                  ? "Its files and tools, with a fresh T3 Code"
+                  : "Optional · a saved Boat snapshot's files and tools, with a fresh T3 Code")}
+          </span>
+        </div>
       </div>
       <div className="view-foot">
-        <button type="submit" className="btn btn-solid btn-lg" disabled={!!problem || !size}>
+        <button type="submit" className="btn btn-solid btn-lg" disabled={!!problem || !!snapshotProblem || !size}>
           Launch machine
         </button>
         <p className="foot-note">

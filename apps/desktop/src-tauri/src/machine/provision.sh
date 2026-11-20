@@ -1,14 +1,27 @@
 #!/usr/bin/env bash
 # Runs on a Boat sandbox, as `user`. Idempotent; also used to upgrade a machine.
 #   T3BOAT_SECRET=<watchdog-secret> [T3BOAT_TAILSCALE_KEY_FILE=<path>] \
-#     provision.sh <t3-version> <sleep-after-secs> <snapshot-name> <mint-upstream-token:0|1> <name>
+#     provision.sh <t3-version> <sleep-after-secs> <snapshot-name> <mint-upstream-token:0|1> <name> \
+#     <fresh-from-snapshot:0|1>
 # Expects watchdog.mjs next to it. Prints one JSON line: {"environmentId", "upstreamToken"?}.
 # T3BOAT_TAILSCALE_KEY_FILE: a file holding a Tailscale auth key; set only when creating a
 # machine with Tailscale on. The key never appears in an argument list.
 set -euo pipefail
 
-version="$1" sleep_after="$2" snapshot="$3" mint_upstream="$4" name="$5"
+version="$1" sleep_after="$2" snapshot="$3" mint_upstream="$4" name="$5" fresh="$6"
 secret="$T3BOAT_SECRET"
+
+# A new machine started from a saved snapshot, maybe another t3boat machine's: drop that
+# machine's identity before it can act as it (its watchdog would snapshot over the source's
+# snapshot), its T3 environment id, auth secrets and chats. The t3 binary, the user's repos and
+# tools stay; they are what the snapshot is for.
+if [ "$fresh" = 1 ]; then
+  for unit in t3boat-watchdog.service t3code.service; do
+    systemctl --user stop "$unit" >/dev/null 2>&1 || true
+  done
+  rm -rf "$HOME/.t3/userdata" "$HOME/.t3boat"
+fi
+
 here="$(cd "$(dirname "$0")" && pwd)"
 t3="$HOME/.local/bin/t3"
 boat_dir="$HOME/.t3boat"
@@ -20,7 +33,8 @@ chmod 700 "$boat_dir"
 # It is restarted only when something it runs on changed: a restart drops every T3 Code
 # connection, and most upgrades only touch the watchdog.
 restart_t3=0
-if [ "$("$t3" --version 2>/dev/null || true)" != "t3 v$version" ]; then
+# A snapshot's own t3 binary is not trusted: a share code can come from anyone.
+if [ "$fresh" = 1 ] || [ "$("$t3" --version 2>/dev/null || true)" != "t3 v$version" ]; then
   if ! curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION="$version" sh >"$boat_dir/install.log" 2>&1; then
     echo "T3 install failed" >&2
     tail -n 40 "$boat_dir/install.log" >&2

@@ -61,6 +61,7 @@ enum Call {
     CreateMachine {
         name: String,
         size: Option<String>,
+        snapshot: Option<String>,
         #[serde(default)]
         projects: Vec<String>,
     },
@@ -189,10 +190,16 @@ fn tool_list() -> Value {
             "create_machine",
             "Creates a new remote machine with T3 Code on it. Takes about a minute. When it is ready, \
              T3 Code shows the user a dialog to add it as a backend; tell the user to confirm it there. \
-             `projects` (ids from list_projects) are then added to it as add_project does.",
+             `projects` (ids from list_projects) are then added to it as add_project does. With \
+             `snapshot`, its disk starts from that saved Boat snapshot (files, repos, installed tools) \
+             instead of a clean one; it still gets its own T3 identity, without the snapshot's chats.",
             json!({
                 "name": { "type": "string", "description": "Unique machine name" },
                 "size": size("Defaults to default"),
+                "snapshot": {
+                    "type": "string",
+                    "description": "Optional: the name of one of the user's saved Boat snapshots (lowercase letters, digits, dashes) to start from. Share codes are refused here: a disk from someone else gets the user's sessions and project .env files, so only the user starts one, from the app."
+                },
                 "projects": { "type": "array", "items": { "type": "string" }, "description": "Project ids from list_projects" },
             }),
             &["name"],
@@ -353,8 +360,15 @@ impl Tools for App {
 async fn run(app: &Arc<App>, call: Call) -> Result<String> {
     Ok(match call {
         Call::ListMachines {} => json!({ "machines": app.views(), "costs": app.costs() }).to_string(),
-        Call::CreateMachine { name, size, projects } => {
-            let m = app.create_machine(&name, size.as_deref().unwrap_or("default"), projects).await?;
+        Call::CreateMachine { name, size, snapshot, projects } => {
+            if snapshot.as_deref().is_some_and(|s| s.starts_with("bsh_")) {
+                return Err(anyhow::anyhow!(
+                    "share codes start someone else's disk, which then gets the user's sessions and .env files; ask the user to start it from the t3boat app"
+                ));
+            }
+            let m = app
+                .create_machine(&name, size.as_deref().unwrap_or("default"), snapshot.as_deref(), projects)
+                .await?;
             format!(
                 "Created {} ({}). T3 Code now asks the user to add it as a backend; tell them to confirm.",
                 m.record().name,
@@ -566,7 +580,12 @@ mod tests {
         let r = rpc("tools/call", json!({ "name": "list_machines" })).await;
         assert_eq!(r["result"], content("ListMachines".into(), false));
         let r = rpc("tools/call", json!({ "name": "create_machine", "arguments": { "name": "dev" } })).await;
-        assert_eq!(r["result"]["content"][0]["text"], r#"CreateMachine { name: "dev", size: None, projects: [] }"#);
+        assert_eq!(r["result"]["content"][0]["text"], r#"CreateMachine { name: "dev", size: None, snapshot: None, projects: [] }"#);
+        let r = rpc("tools/call", json!({ "name": "create_machine", "arguments": { "name": "dev", "snapshot": "base-tools" } })).await;
+        assert_eq!(
+            r["result"]["content"][0]["text"],
+            r#"CreateMachine { name: "dev", size: None, snapshot: Some("base-tools"), projects: [] }"#
+        );
         let r = rpc("tools/call", json!({ "name": "sleep_machine", "arguments": { "machine": "dev" } })).await;
         assert_eq!(r["result"], content("an agent is working".into(), true));
         let r = rpc("tools/call", json!({ "name": "resize_machine", "arguments": { "machine": "dev", "size": "huge" } })).await;

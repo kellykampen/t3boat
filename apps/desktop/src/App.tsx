@@ -213,9 +213,9 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
     );
   const removeTailscaleKey = () => call("remove_tailscale_key", undefined).catch((e) => toast(errorText(e)));
 
-  const create = (name: string, size: string, projects: string[]) => {
+  const create = (name: string, size: string, projects: string[], snapshot?: string) => {
     setView("list");
-    call("create_machine", { name, size, projects }).catch((e) => toast(errorText(e)));
+    call("create_machine", { name, size, projects, snapshot }).catch((e) => toast(errorText(e)));
   };
 
   return (

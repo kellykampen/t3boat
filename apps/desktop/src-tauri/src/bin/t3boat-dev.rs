@@ -1,5 +1,5 @@
 //! Headless driver for development: runs the app model and proxies without the tray.
-//! Reads commands from stdin: list | create <name> [size] | pair <id> | wake <id> | sleep <id> |
+//! Reads commands from stdin: list | create <name> [size] [snapshot] | pair <id> | wake <id> | sleep <id> |
 //! keep <id> [minutes] (keep awake; none: until stopped, 0 ends it) | connect <id> | delete <id> | costs |
 //! tailscale-key <file> (the key is read from a file, never typed into a command) | tailscale-forget |
 //! tailscale-mode <off|browser|key> | tailscale-connect <id> (browser sign-in)
@@ -57,7 +57,7 @@ async fn command(app: &Arc<App>, words: &[String]) -> anyhow::Result<()> {
         }
         Some("create") => {
             let size = words.get(2).cloned().unwrap_or_else(|| "small".into());
-            let m = app.create_machine(&arg(1), &size, Vec::new()).await?;
+            let m = app.create_machine(&arg(1), &size, words.get(3).map(String::as_str), Vec::new()).await?;
             println!("CREATED {} on port {}", m.id(), m.record().local_port);
         }
         Some("pair") => app.pair(&*app.machine(&arg(1))?)?,

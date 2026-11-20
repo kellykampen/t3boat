@@ -54,6 +54,14 @@ export interface LocalProject {
   icon: string | null; // data: URL of the project's favicon in T3 Code
 }
 
+/** A saved Boat snapshot a new machine can start from (status is always "ready"). */
+export interface SavedSnapshot {
+  name: string;
+  createdAt: string; // ISO 8601
+  sourceSandboxId: string | null; // the machine (sandbox) it was taken of, when Boat says
+  status: string;
+}
+
 /** `detail` as `template` with `{left}` filled in: the time left until `endsAt` (unix ms). */
 export interface Countdown {
   template: string;
@@ -105,8 +113,9 @@ export type SetupAction = "installBoat" | "signInBoat" | "installT3" | "recheck"
 
 export interface Commands {
   get_state: [undefined, UiState];
-  create_machine: [{ name: string; size: string; projects?: string[] }, void]; // projects: LocalProject ids to add once up
+  create_machine: [{ name: string; size: string; projects?: string[]; snapshot?: string }, void]; // projects: LocalProject ids to add once up; snapshot: saved snapshot name or share code to start from
   local_projects: [undefined, LocalProject[]]; // pinned first, then most recent
+  list_snapshots: [undefined, SavedSnapshot[]]; // ready ones, newest first
   add_project: [{ id: string; projectId: string }, void]; // resolves once cloned
   wake_machine: [{ id: string }, void];
   sleep_machine: [{ id: string }, void];

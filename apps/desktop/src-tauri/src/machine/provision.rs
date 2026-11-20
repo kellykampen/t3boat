@@ -69,10 +69,29 @@ pub fn snapshot_name(name: &str, machine_id: &str) -> String {
     format!("t3boat-{name}-{id}")
 }
 
+/// A snapshot to start a new machine from, as the user gives it: a saved snapshot's name
+/// (lowercase letters, digits and dashes, as Boat names them) or a Boat share code (`bsh_…`).
+/// Checked before it reaches Boat's command line.
+pub fn check_start_snapshot(s: &str) -> Result<()> {
+    // Not starting with a dash: Boat's command line would read it as an option.
+    let name = s.len() <= 128
+        && s.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    let share = s
+        .strip_prefix("bsh_")
+        .is_some_and(|code| !code.is_empty() && code.len() <= 128 && code.chars().all(|c| c.is_ascii_alphanumeric()));
+    if !name && !share {
+        bail!("\"{s}\" is not a snapshot name (lowercase letters, digits and dashes, starting with a letter or digit) or a Boat share code (bsh_…)");
+    }
+    Ok(())
+}
+
 /// Copies the scripts over as a file (the watchdog secret and the Tailscale key must not appear
 /// in any command line) and runs `provision.sh`. `tailscale`: join the user's tailnet with this
 /// key; only a create passes one, so an upgrade never logs a machine in or needs the key. The
 /// key reaches `provision.sh` as a 0600 file in the script's temp dir, deleted on exit.
+/// `fresh`: the disk came from someone else's snapshot (possibly another t3boat machine's), so
+/// its T3 and watchdog identity is wiped before anything else.
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     boat: &Boat,
@@ -83,8 +102,9 @@ pub async fn run(
     snapshot: &str,
     mint_upstream_token: bool,
     tailscale: Option<&AuthKey>,
+    fresh: bool,
 ) -> Result<Provisioned> {
-    let script = script(name, t3_version, watchdog_secret, snapshot, mint_upstream_token, tailscale)?;
+    let script = script(name, t3_version, watchdog_secret, snapshot, mint_upstream_token, tailscale, fresh)?;
     let name = format!("t3boat-provision-{}.sh", random_token());
     let local = std::env::temp_dir().join(&name);
     crate::store::write_private(&local, script.as_bytes())?;
@@ -110,6 +130,7 @@ fn script(
     snapshot: &str,
     mint_upstream_token: bool,
     tailscale: Option<&AuthKey>,
+    fresh: bool,
 ) -> Result<String> {
     let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
     let (ts_file, ts_env) = match tailscale {
@@ -123,7 +144,7 @@ fn script(
         "set -e; d=$(mktemp -d); trap 'rm -rf \"$d\" \"$0\"' EXIT\n\
          echo {p} | base64 -d > \"$d/provision.sh\"; echo {w} | base64 -d > \"$d/watchdog.mjs\"\n\
          {ts_file}\
-         T3BOAT_SECRET={s} {ts_env}bash \"$d/provision.sh\" {v} {sleep} {snapshot} {mint} {name}\n",
+         T3BOAT_SECRET={s} {ts_env}bash \"$d/provision.sh\" {v} {sleep} {snapshot} {mint} {name} {fresh}\n",
         p = b64(PROVISION_SH),
         w = b64(WATCHDOG_MJS),
         v = shell_word(t3_version)?,
@@ -132,6 +153,7 @@ fn script(
         snapshot = shell_word(snapshot)?,
         mint = u8::from(mint_upstream_token),
         name = shell_word(name)?,
+        fresh = u8::from(fresh),
     ))
 }
 
@@ -150,13 +172,15 @@ pub async fn host(boat: &Boat, sandbox_id: &str) -> Result<(String, String)> {
 }
 
 /// Creates a new machine end to end. Takes about a minute, most of it Boat and the T3 install.
-/// On failure after `created`, the caller deletes the sandbox. `tailscale`: also joins the
-/// user's tailnet; a failure there fails the create.
+/// On failure after `created`, the caller deletes the sandbox. `start_from`: a saved snapshot or
+/// share code its disk starts from instead of Boat's base image; it gets its own identity.
+/// `tailscale`: also joins the user's tailnet; a failure there fails the create.
 #[allow(clippy::too_many_arguments)]
 pub async fn create(
     boat: &Boat,
     name: &str,
     size: &str,
+    start_from: Option<&str>,
     t3_version: &str,
     local_port: u16,
     tailscale: Option<&AuthKey>,
@@ -164,15 +188,19 @@ pub async fn create(
     progress: impl Fn(&str),
 ) -> Result<Machine> {
     self::size(size)?;
+    if let Some(s) = start_from {
+        check_start_snapshot(s)?;
+    }
     progress("Creating sandbox on Boat");
     let id = boat
-        .create(&sandbox_name(name), size, None)
+        .create(&sandbox_name(name), size, start_from)
         .await
         .context("creating the Boat sandbox")?;
     created(&id);
     progress(if tailscale.is_some() { "Installing T3 Code and Tailscale" } else { "Installing T3 Code" });
     let secret = random_token();
-    let provisioned = run(boat, &id, name, t3_version, &secret, &snapshot_name(name, &id), true, tailscale).await?;
+    let provisioned =
+        run(boat, &id, name, t3_version, &secret, &snapshot_name(name, &id), true, tailscale, start_from.is_some()).await?;
     progress("Opening the machine's address");
     let (upstream_url, watchdog_url) = host(boat, &id).await?;
     Ok(Machine {
@@ -208,7 +236,7 @@ mod tests {
     #[test]
     fn tailscale_key_travels_as_a_file() {
         let key = AuthKey::parse(KEY).unwrap();
-        let s = script("dev", "0.0.21", "secret", "t3boat-dev-bx", true, Some(&key)).unwrap();
+        let s = script("dev", "0.0.21", "secret", "t3boat-dev-bx", true, Some(&key), false).unwrap();
         assert!(!s.contains(KEY), "the key must not appear in the clear");
         assert!(s.contains(&base64::engine::general_purpose::STANDARD.encode(KEY)));
         assert!(s.contains("(umask 077; echo "));
@@ -217,7 +245,17 @@ mod tests {
 
     #[test]
     fn no_tailscale_without_a_key() {
-        let s = script("dev", "0.0.21", "secret", "t3boat-dev-bx", false, None).unwrap();
+        let s = script("dev", "0.0.21", "secret", "t3boat-dev-bx", false, None, false).unwrap();
         assert!(!s.contains("tailscale.key") && !s.contains("T3BOAT_TAILSCALE"));
+    }
+
+    #[test]
+    fn start_snapshot() {
+        for ok in ["base-tools", "t3boat-dev-sb-1a2b", "bsh_AbC123"] {
+            assert!(check_start_snapshot(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "Tools", "a b", "x;rm -rf ~", "--help", "bsh_", "bsh_a-b", "snap_1", "$(id)"] {
+            assert!(check_start_snapshot(bad).is_err(), "{bad}");
+        }
     }
 }
