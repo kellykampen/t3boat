@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Runs on a machine through `boat exec`, as `user`, once it is on the user's tailnet
 # (`tailnet::ensure_tailnet_serve`). Idempotent: run after a join and on every wake.
-#   tailscale-serve.sh <may-restart-t3:0|1>
+#   tailscale-serve.sh <may-restart-t3:0|1> <snapshot-name>
+# First starts tailscaled, which never starts at boot (a disk copied to a new machine would come
+# up as this node), when the disk is this machine's own: its owner marker is <snapshot-name>.
 # Turns on T3's own Tailscale Serve support, so T3 publishes itself as
 # https://<MagicDNS name>/ and advertises that endpoint: `T3CODE_TAILSCALE_SERVE=true` in T3's
 # service.env, which T3's service launcher reads at every start (`t3 service install` rewrites
@@ -17,12 +19,25 @@
 set -euo pipefail
 
 may_restart="$1"
+snapshot="$2"
 user="$(id -un)"
 port=3773
 
 say() {
   node -e 'console.log(JSON.stringify({ state: process.argv[1], dnsName: process.argv[2] || "" }))' "$1" "${2:-}"
 }
+
+ts_owner=/var/lib/tailscale/t3boat-owner
+if command -v tailscale >/dev/null && sudo test -f "$ts_owner" && [ "$(sudo cat "$ts_owner")" = "$snapshot" ]; then
+  sudo systemctl disable tailscaled >/dev/null 2>&1 || true
+  if ! sudo systemctl is-active --quiet tailscaled; then
+    sudo systemctl start tailscaled
+    for _ in $(seq 1 30); do
+      sudo tailscale status --peers=false >/dev/null 2>&1 && break
+      sleep 1
+    done
+  fi
+fi
 
 # BackendState, MagicDNS name (no trailing dot) and whether the tailnet issues HTTPS certificates
 # (the node's CapMap has "https"), as `T3`'s own check reads them. Tab-separated.

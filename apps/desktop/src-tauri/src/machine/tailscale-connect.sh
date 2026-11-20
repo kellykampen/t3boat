@@ -23,7 +23,8 @@ ts_status() {
 # A disk copied from another machine carries that machine's node key: wiped here, never logged out.
 if sudo test -f "$ts_owner" && [ "$(sudo cat "$ts_owner")" != "$snapshot" ]; then
   sudo systemctl stop tailscaled >/dev/null 2>&1 || true
-  sudo rm -rf "$ts_dir"
+  # Emptied, not removed: on a machine started from a snapshot, Boat mounts it (busy to rm).
+  sudo find "$ts_dir" -mindepth 1 -delete
 fi
 if ! command -v tailscale >/dev/null; then
   if ! curl -fsSL https://tailscale.com/install.sh | sh >"$boat_dir/tailscale-install.log" 2>&1; then
@@ -32,7 +33,10 @@ if ! command -v tailscale >/dev/null; then
     exit 1
   fi
 fi
-if ! sudo systemctl enable --now tailscaled >/dev/null 2>&1; then
+# Never at boot: a disk copied to a new machine would come up on the tailnet as this node until
+# provisioning wipes it. Started here, and on each wake by tailscale-serve.sh on this disk only.
+sudo systemctl disable tailscaled >/dev/null 2>&1 || true
+if ! sudo systemctl start tailscaled >/dev/null 2>&1; then
   echo "Tailscale: tailscaled did not start" >&2
   exit 1
 fi
