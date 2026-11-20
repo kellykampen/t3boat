@@ -45,6 +45,11 @@ pub struct Machine {
     /// Joined the user's tailnet when created: a delete logs it out first.
     #[serde(default)]
     pub tailscale: bool,
+    /// Its T3 server over Tailscale Serve HTTPS, `https://t3boat-<name>.<tailnet>.ts.net`, once
+    /// T3 there publishes it (`T3CODE_TAILSCALE_SERVE`). Checked against this computer's own
+    /// tailnet before it is kept: the proxy sends the upstream token there.
+    #[serde(default)]
+    pub tailnet_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

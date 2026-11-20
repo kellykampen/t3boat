@@ -51,6 +51,13 @@ interface MachineView {
                        // url null: a tailnet admin must approve the device instead
     | { state: "error"; message: string }           // the last join failed: message + "Try again"
     | null;            // List: a dots chip while starting/waiting
+  tailnetUrl: string | null; // its T3 over Tailscale Serve HTTPS, `https://t3boat-<name>.<tailnet>.ts.net`, once
+                       // published (only while `tailscale`). Details → other devices: the address on its
+                       // own line under the hostname, then "Pairing link" (`tailscale_pairing_link`)
+  tailnetRoute: boolean; // t3boat's proxy reaches it over the tailnet right now (it runs and answered there
+                       // lately); false: over Boat's public URL. Details: a "via tailnet" chip by the address
+  tailnetHttpsOff: boolean; // HTTPS certificates are off on the tailnet, so it can't be published there (it
+                       // keeps working over Boat). Details: a note + "Turn on" (`tailscale_open_https_settings`)
 }
 
 interface UiState {
@@ -120,6 +127,8 @@ interface MachineDetails {
 | `tailscale_connect` | `{ id }` | → `boolean`. Joins the machine to the tailnet by signing in with the browser, on any machine (old ones too, in any mode): wakes it and keeps it awake meanwhile; on the machine installs Tailscale if missing, wipes a copied disk's foreign node (owner marker) and, unless already on a tailnet, starts `tailscale up --hostname=t3boat-<name> --ssh` (no key); opens its sign-in page here; waits up to 10 min for the node to run, then writes the owner marker and sets `tailscale`. Progress is `tailscaleJoin`. Resolves `true` once on the tailnet, `false` if cancelled; rejects when it fails (also in `tailscaleJoin`) or while a join is already running. Not a tracked action: the row stays usable |
 | `tailscale_open_sign_in` | `{ id }` | opens the sign-in page of a `waitingForSignIn` join again |
 | `tailscale_cancel` | `{ id }` | ends a join; its `tailscale up` on the machine stops; `tailscaleJoin` back to null |
+| `tailscale_pairing_link` | `{ id }` | wakes the machine, has its T3 server mint a one-time pairing token and copies `<tailnetUrl>/pair#token=…` to the clipboard: opened on another device of the tailnet, it pairs T3 Code there with the machine directly. Rejects when the machine isn't on the tailnet or not published there (`tailnetUrl` null; the message says why, with the admin/dns link when HTTPS certificates are off) |
+| `tailscale_open_https_settings` | – | opens https://login.tailscale.com/admin/dns, where HTTPS certificates are turned on |
 | `remove_tailscale_key` | – | deletes it from the keychain; machines already on the tailnet stay there. Deleting a machine that joined logs it out first when it is awake (asleep: its offline node stays until removed in Tailscale's admin console) |
 | `setup_action` | `{ action }` | `"installBoat" \| "signInBoat" \| "installT3" \| "recheck"` |
 | `quit_app` | – | |

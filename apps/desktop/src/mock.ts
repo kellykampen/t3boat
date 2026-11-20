@@ -7,6 +7,9 @@
 // ?tailscale=browser (Settings › Tailscale is "sign in with your browser": new machines open a sign-in page,
 //   any machine can Connect; t3-main and side-quest are on the tailnet, the others not yet)
 // ?tailscale=1 or key (an auth key is saved and the mode is "key": new machines join with it)
+// ?tailnet=httpsoff (HTTPS certificates are off on the tailnet: machines on it show the note, no address)
+// ?tailnet=boat (published over Tailscale Serve, but t3boat reaches them over Boat's URL right now)
+//   default: machines on the tailnet are published there; t3-main is reached over the tailnet now
 import type { Backend } from "./api";
 import { timeLapse } from "./pixel/clock";
 import type {
@@ -26,9 +29,27 @@ const params = new URLSearchParams(location.search);
 
 type Seed = Omit<
   MachineView,
-  "countdown" | "signedOut" | "projects" | "keepAwakeUntil" | "keepAwakeForever" | "tailscale" | "tailscaleJoin"
+  | "countdown"
+  | "signedOut"
+  | "projects"
+  | "keepAwakeUntil"
+  | "keepAwakeForever"
+  | "tailscale"
+  | "tailscaleJoin"
+  | "tailnetUrl"
+  | "tailnetRoute"
+  | "tailnetHttpsOff"
 > &
-  Partial<Pick<MachineView, "countdown" | "signedOut" | "projects" | "tailscale">>;
+  Partial<Pick<MachineView, "countdown" | "signedOut" | "projects" | "tailscale" | "tailnetRoute">>;
+
+const TAILNET_PARAM = params.get("tailnet");
+/** What Tailscale Serve looks like for a machine on the tailnet (`?tailnet=`). */
+const served = (name: string, route: boolean) =>
+  TAILNET_PARAM === "httpsoff"
+    ? { tailnetUrl: null, tailnetRoute: false, tailnetHttpsOff: true }
+    : { tailnetUrl: `https://t3boat-${name}.tail4c2e1.ts.net`, tailnetRoute: route && TAILNET_PARAM !== "boat", tailnetHttpsOff: false };
+const NOT_SERVED = { tailnetUrl: null, tailnetRoute: false, tailnetHttpsOff: false };
+
 const machine = (m: Seed): MachineView => ({
   countdown: null,
   signedOut: [],
@@ -38,6 +59,7 @@ const machine = (m: Seed): MachineView => ({
   tailscale: false,
   tailscaleJoin: null,
   ...m,
+  ...(m.tailscale ? served(m.name, m.tailnetRoute ?? false) : NOT_SERVED),
 });
 
 const TAILSCALE_PARAM = params.get("tailscale");
@@ -90,6 +112,7 @@ const seedMachines: MachineView[] = [
     detail: "Working · 2 threads · 3 subagents",
     paired: true,
     tailscale: true,
+    tailnetRoute: true,
     projects: [onMachine("t3code", "github.com/pingdotgg/t3code"), onMachine("website", "github.com/you/website")],
   }),
   machine({
@@ -392,7 +415,7 @@ function create(): MockBackend {
       console.info("[mock] open", url);
       await wait(3000);
       if (!live()) return false;
-      patch(id, { tailscale: true, tailscaleJoin: null });
+      patch(id, { tailscale: true, tailscaleJoin: null, ...served(find(id).name, true) });
       return true;
     },
 
@@ -405,6 +428,18 @@ function create(): MockBackend {
     async tailscale_cancel({ id }) {
       joinRuns[id] = (joinRuns[id] ?? 0) + 1;
       patch(id, { tailscaleJoin: null });
+    },
+
+    async tailscale_pairing_link({ id }) {
+      const m = find(id);
+      if (m.tailnetHttpsOff) throw "HTTPS certificates are off on your tailnet; turn them on at https://login.tailscale.com/admin/dns";
+      if (!m.tailnetUrl) throw `${m.name} isn't published on your tailnet yet`;
+      await wait(m.state === "asleep" ? 2500 : 600);
+      console.info(`[mock] copied ${m.tailnetUrl}/pair#token=…`);
+    },
+
+    async tailscale_open_https_settings() {
+      console.info("[mock] open https://login.tailscale.com/admin/dns");
     },
 
     async set_tailscale_key({ key }) {

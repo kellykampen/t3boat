@@ -80,6 +80,12 @@ pub struct MachineView {
     pub tailscale: bool,
     /// A browser sign-in to the tailnet in progress, or how the last one failed.
     pub tailscale_join: Option<TailnetJoin>,
+    /// Its T3 over Tailscale Serve HTTPS, `https://t3boat-<name>.<tailnet>.ts.net`, once published.
+    pub tailnet_url: Option<String>,
+    /// The proxy reaches it over the tailnet right now (else over Boat's public URL).
+    pub tailnet_route: bool,
+    /// HTTPS certificates are off on the tailnet, so it cannot be published there.
+    pub tailnet_https_off: bool,
 }
 
 /// `detail` as `template` with `{left}` filled in: the time left until `ends_at` (unix ms).
@@ -499,6 +505,13 @@ impl App {
         }
     }
 
+    /// Copies a one-time link to the clipboard that pairs T3 Code on another device of the
+    /// tailnet with the machine, through its Tailscale Serve address. Wakes it.
+    pub async fn copy_tailnet_pairing_link(&self, machine: &MachineRuntime) -> Result<()> {
+        let link = machine.tailnet_pairing_link().await?;
+        copy_text(&link).await
+    }
+
     /// Opens T3 Code's own "add backend" confirmation for this machine.
     pub fn pair(&self, machine: &MachineRuntime) -> Result<()> {
         let code = machine.auth.new_pairing_code();
@@ -587,6 +600,9 @@ impl App {
                 keep_awake_forever: false,
                 tailscale: false,
                 tailscale_join: None,
+                tailnet_url: None,
+                tailnet_route: false,
+                tailnet_https_off: false,
             });
         }
         views
@@ -810,6 +826,9 @@ fn view(m: &MachineRuntime) -> MachineView {
         keep_awake_forever: running_watchdog.is_some_and(|w| w.keep_awake_forever),
         tailscale: r.tailscale,
         tailscale_join: m.tailnet_join(),
+        tailnet_url: r.tailnet_url.clone().filter(|_| r.tailscale),
+        tailnet_route: m.tailnet_route().is_some(),
+        tailnet_https_off: r.tailscale && m.tailnet_https_off(),
     }
 }
 
@@ -850,6 +869,35 @@ pub fn open_url(url: &str) -> Result<()> {
     use gtk::gio;
     gio::AppInfo::launch_default_for_uri(url, None::<&gio::AppLaunchContext>)
         .map_err(|e| anyhow::anyhow!("could not open {url}: {e}"))
+}
+
+/// Puts `text` on the clipboard with the system's own tool: the web view may refuse a write that
+/// comes long after the click (a wake).
+pub async fn copy_text(text: &str) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let (program, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
+        ("pbcopy", &[])
+    } else if cfg!(windows) {
+        ("clip", &[])
+    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        ("wl-copy", &[])
+    } else {
+        ("xclip", &["-selection", "clipboard"])
+    };
+    let mut child = crate::process::command(program)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("could not copy: {program} did not start"))?;
+    let mut stdin = child.stdin.take().context("could not copy")?;
+    stdin.write_all(text.as_bytes()).await?;
+    drop(stdin);
+    if !child.wait().await?.success() {
+        bail!("could not copy: {program} failed");
+    }
+    Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]

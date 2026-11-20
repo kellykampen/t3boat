@@ -163,6 +163,10 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
       tailnet(m, a.cmd);
       return;
     }
+    if (a.cmd === "tailscale_open_https_settings") {
+      call("tailscale_open_https_settings", undefined).catch((e) => toast(errorText(e)));
+      return;
+    }
     track(m, a.busy, async () => {
       const key = machineKey(m);
       const acceptHint = () => toast(`Switch to T3 Code to accept "${m.name}"`, "info");
@@ -179,6 +183,10 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
         case "sign_in_agent":
           await call("sign_in_agent", { id: m.id, agent: a.agent });
           toast(`${a.agent} is signed in on ${m.name}`, "info");
+          return;
+        case "tailscale_pairing_link":
+          await call("tailscale_pairing_link", { id: m.id });
+          toast(`Pairing link for ${m.name} copied: open it on a device on your tailnet`, "info");
           return;
         case "turn_on_connect":
           await call("turn_on_connect", { id: m.id });

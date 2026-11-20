@@ -30,6 +30,34 @@ pub async fn connect(base_url: &str, token: &str, target: &str) -> Result<Upstre
     Ok(ws)
 }
 
+/// Opens `target` on the machine's T3 server: over the tailnet while it answers there, else (or
+/// when that fails short of an answer from T3) over Boat's URL. A refusal from T3 itself (an
+/// HTTP status for the upgrade) is its answer whichever way it came.
+pub async fn connect_machine(m: &crate::machine::MachineRuntime, target: &str) -> Result<Upstream> {
+    let token = m.upstream_token();
+    if let Some(tailnet) = m.tailnet_route() {
+        match connect(&tailnet, &token, target).await {
+            Ok(ws) => return Ok(ws),
+            Err(e) if refused_by_server(&e) => return Err(e),
+            Err(e) => {
+                tracing::warn!("{} over the tailnet: {e:#}", m.id());
+                m.tailnet_failed();
+            }
+        }
+    }
+    connect(&m.upstream_url(), &token, target).await
+}
+
+/// T3 answered the upgrade with an HTTP status of its own: not Tailscale Serve's 502 for a T3
+/// that is down.
+fn refused_by_server(e: &anyhow::Error) -> bool {
+    use tokio_tungstenite::tungstenite::Error;
+    match e.downcast_ref::<Error>() {
+        Some(Error::Http(res)) => !matches!(res.status().as_u16(), 502..=504),
+        _ => false,
+    }
+}
+
 /// The RPC socket. `client_query` carries the desktop's client* parameters through, minus its
 /// proxy ticket. Upstream sends whole frames: the proxy does not split or join parts.
 pub fn rpc_target(client_query: &str) -> String {

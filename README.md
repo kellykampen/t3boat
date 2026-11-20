@@ -68,6 +68,14 @@ A machine joined this way belongs to you, like a laptop you signed in on: its ke
 
 A sleeping machine shows as offline and comes back when it wakes. Deleting an awake machine logs it out of the tailnet; delete an asleep one and remove its offline node in the admin console.
 
+### T3 over the tailnet
+
+A machine on your tailnet also publishes its T3 server with [Tailscale Serve](https://tailscale.com/kb/1312/serve), at `https://t3boat-<name>.<your-tailnet>.ts.net`, using T3's own Tailscale Serve support (`T3CODE_TAILSCALE_SERVE` in T3's `service.env`; t3boat also makes the machine's `user` the node's Tailscale operator, which T3 needs to run `tailscale serve`). The first time, T3 there restarts to take it, never while an agent works. It stays on across sleeps. The address shows in the machine's details, under Tailscale.
+
+- When this computer is on the same tailnet, t3boat reaches an awake machine over the tailnet ("via tailnet" in its details), and over Boat's public URL otherwise: while it sleeps, while it wakes, and whenever the tailnet doesn't answer. T3 Code itself still talks to t3boat on localhost, so waking a sleeping machine works as before.
+- "Pairing link" copies a one-time link; open it on another device of your tailnet (a phone, another laptop) to pair T3 Code there with the machine directly.
+- Tailscale Serve needs HTTPS certificates on your tailnet. If they are off, the machine's details say so with a link to [turn them on](https://login.tailscale.com/admin/dns); the machine keeps working over Boat's URL until then, and is published at its next wake after.
+
 ### Advanced: auth key
 
 For machines that join without a sign-in and never expire, pick **Auth key** instead:

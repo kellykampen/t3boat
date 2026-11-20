@@ -42,7 +42,7 @@ pub async fn stream(
     if parts.method != Method::GET && parts.method != Method::HEAD {
         m.user_action();
     }
-    let route = Relay { target, authorization: upstream_bearer(&m), wake: false };
+    let route = Relay { target, authorization: upstream_bearer(&m), wake: false, tailnet: true };
     relay(&m, parts, body, route).await
 }
 
@@ -57,7 +57,7 @@ pub(super) async fn socket(m: Arc<MachineRuntime>, upgrade: WebSocketUpgrade, pa
     {
         return res;
     }
-    match upstream::connect(&m.upstream_url(), &m.upstream_token(), &target).await {
+    match upstream::connect_machine(&m, &target).await {
         Ok(up) => upgrade.on_upgrade(move |down| pump(m, down, up)),
         // The machine's own refusal (no device hub, say) reaches T3 Code as it was.
         Err(e) => match e.downcast_ref() {

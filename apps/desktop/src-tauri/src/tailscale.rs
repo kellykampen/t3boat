@@ -160,6 +160,129 @@ impl Status {
 /// Tailscale's own control server, not a self-hosted one.
 const SIGN_IN_HOST: &str = "login.tailscale.com";
 
+/// Where HTTPS certificates are turned on for a tailnet; Tailscale Serve needs them.
+pub const HTTPS_SETTINGS_URL: &str = "https://login.tailscale.com/admin/dns";
+
+const SERVE_SH: &str = include_str!("machine/tailscale-serve.sh");
+
+/// Run on a machine on the tailnet: turns on T3's own Tailscale Serve (see the script). Its
+/// output ends in a `ServeReport` line. `may_restart`: T3 may be restarted to take the setting,
+/// which stops agent turns.
+pub fn serve_script(may_restart: bool) -> String {
+    format!("set -- {}\n{SERVE_SH}", u8::from(may_restart))
+}
+
+/// What `serve_script` found.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ServeState {
+    /// T3 has Tailscale Serve on, and Serve forwards to it.
+    On,
+    /// T3 has it on, Serve does not forward yet (a first certificate, say).
+    Starting,
+    /// T3 must restart to take it, and may not now (agents work).
+    Busy,
+    /// HTTPS certificates are off on the tailnet: nothing changed.
+    HttpsOff,
+    /// Tailscale does not run on the machine.
+    OffTailnet,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServeReport {
+    pub state: ServeState,
+    /// The machine's MagicDNS name, e.g. `t3boat-dev.tail1234.ts.net`.
+    #[serde(default)]
+    pub dns_name: String,
+}
+
+impl ServeReport {
+    /// The last line of the script's output that is one.
+    pub fn parse(out: &str) -> Result<Self> {
+        let line = out
+            .lines()
+            .rev()
+            .map(str::trim)
+            .find(|l| l.starts_with('{'))
+            .ok_or_else(|| anyhow!("the Tailscale Serve setup said nothing"))?;
+        serde_json::from_str(line).context("reading the Tailscale Serve setup's answer")
+    }
+}
+
+/// `https://<dns_name>`, the machine's T3 over Tailscale Serve, if `dns_name` is a node of this
+/// computer's own tailnet (`suffix`, its MagicDNS suffix). The machine reports the name and the
+/// proxy sends its upstream token there, so nothing else passes: not another tailnet, not a
+/// name outside `.ts.net`, not anything a URL parser could read as more than a host.
+pub fn tailnet_origin(dns_name: &str, suffix: &str) -> Option<String> {
+    let name = dns_name.trim().trim_end_matches('.').to_ascii_lowercase();
+    let suffix = suffix.trim().trim_matches('.').to_ascii_lowercase();
+    let label = name.strip_suffix(&format!(".{suffix}"))?;
+    let ok = suffix.ends_with(".ts.net")
+        && suffix.split('.').all(dns_label)
+        && !label.contains('.')
+        && dns_label(label);
+    ok.then(|| format!("https://{name}"))
+}
+
+fn dns_label(label: &str) -> bool {
+    (1..=63).contains(&label.len())
+        && label.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !label.starts_with('-')
+        && !label.ends_with('-')
+}
+
+/// This computer's tailnet, as its own `tailscale status --json` says.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct LocalStatus {
+    #[serde(rename = "BackendState", default)]
+    pub backend_state: String,
+    #[serde(rename = "MagicDNSSuffix", default)]
+    pub magic_dns_suffix: String,
+}
+
+impl LocalStatus {
+    /// The MagicDNS suffix of the tailnet this computer is on, if it is on one now.
+    pub fn suffix(&self) -> Option<&str> {
+        let s = self.magic_dns_suffix.trim().trim_matches('.');
+        (self.backend_state == "Running" && !s.is_empty()).then_some(s)
+    }
+}
+
+/// The Tailscale CLI on this computer: on PATH, or inside the macOS app.
+fn local_cli() -> Option<std::path::PathBuf> {
+    which::which("tailscale").ok().or_else(|| {
+        let app = std::path::Path::new("/Applications/Tailscale.app/Contents/MacOS/Tailscale");
+        (cfg!(target_os = "macos") && app.exists()).then(|| app.to_owned())
+    })
+}
+
+/// This computer's tailnet suffix, if Tailscale runs here. None when it is not installed, not
+/// running, or does not answer: the machines are then reached over Boat, as without Tailscale.
+pub async fn local_suffix() -> Option<String> {
+    let cli = local_cli()?;
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::process::command(cli).args(["status", "--json", "--peers=false"]).output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let status: LocalStatus = serde_json::from_slice(&out.stdout).ok()?;
+    status.suffix().map(str::to_owned)
+}
+
+/// A link another device opens to pair T3 Code with the machine through the tailnet, as
+/// `t3 pair` builds one: the one-time token in the fragment, never sent to a server.
+pub fn pairing_url(origin: &str, credential: &str) -> Result<String> {
+    let mut url = url::Url::parse(origin).context("the machine's tailnet address")?;
+    url.set_path("/pair");
+    url.set_query(None);
+    let fragment: String = url::form_urlencoded::Serializer::new(String::new()).append_pair("token", credential).finish();
+    url.set_fragment(Some(&fragment));
+    Ok(url.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,6 +345,82 @@ mod tests {
             let st = Status { auth_url: bad.into(), ..Default::default() };
             assert_eq!(st.sign_in_url(), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn serve_report_is_the_last_json_line() {
+        let out = "Operator set\n{\"state\":\"on\",\"dnsName\":\"t3boat-dev.tail1234.ts.net\"}\n";
+        assert_eq!(
+            ServeReport::parse(out).unwrap(),
+            ServeReport { state: ServeState::On, dns_name: "t3boat-dev.tail1234.ts.net".into() }
+        );
+        assert_eq!(ServeReport::parse(r#"{"state":"httpsOff","dnsName":"x"}"#).unwrap().state, ServeState::HttpsOff);
+        assert_eq!(ServeReport::parse(r#"{"state":"offTailnet","dnsName":""}"#).unwrap().state, ServeState::OffTailnet);
+        assert_eq!(ServeReport::parse(r#"{"state":"busy"}"#).unwrap().dns_name, "");
+        assert!(ServeReport::parse(r#"{"state":"maybe"}"#).is_err());
+        assert!(ServeReport::parse("tailscale: command not found").is_err());
+    }
+
+    #[test]
+    fn serve_script_passes_the_restart_choice_first() {
+        assert!(serve_script(true).starts_with("set -- 1\n"));
+        assert!(serve_script(false).starts_with("set -- 0\n"));
+        let s = serve_script(true);
+        assert!(s.contains("T3CODE_TAILSCALE_SERVE=true"));
+        assert!(s.contains("--operator="));
+        assert!(!s.contains("tskey"));
+    }
+
+    #[test]
+    fn only_a_node_of_this_computers_tailnet_is_a_tailnet_origin() {
+        let suffix = "tail1234.ts.net";
+        assert_eq!(
+            tailnet_origin("t3boat-dev.tail1234.ts.net.", suffix).as_deref(),
+            Some("https://t3boat-dev.tail1234.ts.net")
+        );
+        assert_eq!(tailnet_origin("T3boat-Dev.tail1234.ts.net", ".tail1234.ts.net.").as_deref(), Some("https://t3boat-dev.tail1234.ts.net"));
+        for bad in [
+            "t3boat-dev.tail9999.ts.net",           // another tailnet
+            "t3boat-dev.evil.example",              // not the tailnet at all
+            "evil.example/x.tail1234.ts.net",       // a path
+            "evil.example#.tail1234.ts.net",        // a fragment
+            "user@t3boat-dev.tail1234.ts.net",      // credentials
+            "a.b.tail1234.ts.net",                  // a subdomain of a node
+            "-dev.tail1234.ts.net",
+            "t3boat-dev:8443.tail1234.ts.net",
+            ".tail1234.ts.net",
+            "tail1234.ts.net",
+            "",
+        ] {
+            assert_eq!(tailnet_origin(bad, suffix), None, "{bad}");
+        }
+        // Not Tailscale's own DNS: never.
+        assert_eq!(tailnet_origin("dev.corp.example", "corp.example"), None);
+        assert_eq!(tailnet_origin("dev.tail1234.ts.net", ""), None);
+    }
+
+    #[test]
+    fn local_suffix_needs_a_running_tailscale() {
+        let up: LocalStatus =
+            serde_json::from_str(r#"{"BackendState":"Running","MagicDNSSuffix":"tail1234.ts.net","Self":{}}"#).unwrap();
+        assert_eq!(up.suffix(), Some("tail1234.ts.net"));
+        let stopped: LocalStatus =
+            serde_json::from_str(r#"{"BackendState":"Stopped","MagicDNSSuffix":"tail1234.ts.net"}"#).unwrap();
+        assert_eq!(stopped.suffix(), None);
+        let no_dns: LocalStatus = serde_json::from_str(r#"{"BackendState":"Running","MagicDNSSuffix":""}"#).unwrap();
+        assert_eq!(no_dns.suffix(), None);
+    }
+
+    #[test]
+    fn pairing_url_carries_the_token_in_the_fragment() {
+        assert_eq!(
+            pairing_url("https://t3boat-dev.tail1234.ts.net", "AbC-12_x").unwrap(),
+            "https://t3boat-dev.tail1234.ts.net/pair#token=AbC-12_x"
+        );
+        assert_eq!(
+            pairing_url("https://t3boat-dev.tail1234.ts.net", "a b&c").unwrap(),
+            "https://t3boat-dev.tail1234.ts.net/pair#token=a+b%26c"
+        );
     }
 
     #[test]

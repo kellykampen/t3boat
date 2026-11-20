@@ -403,7 +403,7 @@ function Connect({
         ) : (
           <Skeleton rows={1} />
         )}
-        <Tailscale m={m} mode={tailscaleMode} onAction={onAction} onOpenSettings={onOpenSettings} />
+        <Tailscale m={m} mode={tailscaleMode} pending={pending} onAction={onAction} onOpenSettings={onOpenSettings} />
       </ul>
     </Section>
   );
@@ -413,11 +413,13 @@ function Connect({
 function Tailscale({
   m,
   mode,
+  pending,
   onAction,
   onOpenSettings,
 }: {
   m: MachineView;
   mode: TailscaleMode;
+  pending: string | null;
   onAction: (a: Action) => void;
   onOpenSettings: () => void;
 }) {
@@ -435,26 +437,74 @@ function Tailscale({
     );
 
   if (m.tailscale) {
+    const pairing = pending === ACTIONS.tailnetPair.busy;
     return (
-      <li className="line line-tailscale">
-        <span>Tailscale</span>
-        <span className="line-main line-host selectable" title={`On your tailnet as ${tailnetHost(m)}`}>
-          {tailnetHost(m)}
-        </span>
-        <button className="btn btn-sm btn-quiet copy-btn" title={`Copy “${ssh}”`} onClick={copy}>
-          {copied === "ok" ? (
-            <>
-              <Icon name="check" size={10} /> Copied
-            </>
-          ) : copied === "failed" ? (
-            "Couldn't copy"
-          ) : (
-            <>
-              <Icon name="copy" size={10} /> Copy ssh
-            </>
-          )}
-        </button>
-      </li>
+      <>
+        <li className="line line-tailscale">
+          <span>Tailscale</span>
+          <span className="line-main line-host selectable" title={`On your tailnet as ${tailnetHost(m)}`}>
+            {tailnetHost(m)}
+          </span>
+          <button className="btn btn-sm btn-quiet copy-btn" title={`Copy “${ssh}”`} onClick={copy}>
+            {copied === "ok" ? (
+              <>
+                <Icon name="check" size={10} /> Copied
+              </>
+            ) : copied === "failed" ? (
+              "Couldn't copy"
+            ) : (
+              <>
+                <Icon name="copy" size={10} /> Copy ssh
+              </>
+            )}
+          </button>
+        </li>
+        {m.tailnetUrl ? (
+          <>
+            <li className="line line-tailnet-url">
+              <span
+                className="line-main line-host selectable"
+                title={`T3 over Tailscale Serve${m.tailnetRoute ? "; t3boat reaches it over the tailnet now" : ""}`}
+              >
+                https://
+                <wbr />
+                <span className="host-name">{m.tailnetUrl.replace(/^https:\/\//, "")}</span>
+              </span>
+              {m.tailnetRoute ? <span className="chip chip-tailnet chip-route">via tailnet</span> : null}
+            </li>
+            <li className="line">
+              <span className="line-main line-dim">T3 Code on another tailnet device</span>
+              <button
+                className="btn btn-sm btn-quiet copy-btn"
+                title="Copy a one-time link that pairs T3 Code on another device of your tailnet"
+                disabled={!!pending || m.state === "missing"}
+                aria-busy={pairing}
+                onClick={() => onAction(ACTIONS.tailnetPair)}
+              >
+                {pairing ? (
+                  <>
+                    <Dots /> Copying…
+                  </>
+                ) : (
+                  <>
+                    <Icon name="copy" size={10} /> Pairing link
+                  </>
+                )}
+              </button>
+            </li>
+          </>
+        ) : m.tailnetHttpsOff ? (
+          <li className="line">
+            <span className="line-main line-dim line-wrap">
+              HTTPS certificates are off on your tailnet, so T3 is reached over Boat. Turn them on in Tailscale's DNS
+              settings.
+            </span>
+            <button className="btn btn-sm btn-outline" onClick={() => onAction(ACTIONS.tailnetHttps)}>
+              {ACTIONS.tailnetHttps.label}
+            </button>
+          </li>
+        ) : null}
+      </>
     );
   }
   const join = m.tailscaleJoin;
@@ -559,7 +609,6 @@ function Projects({
     </Section>
   );
 }
-
 
 /** The rare stuff: size and delete, folded away. */
 function MachineMore({

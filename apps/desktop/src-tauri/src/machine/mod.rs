@@ -175,6 +175,12 @@ pub struct MachineRuntime {
     /// One join at a time.
     joining_tailnet: tokio::sync::Mutex<()>,
     tailnet_cancel: tokio::sync::Notify,
+    /// The last check of its T3 over Tailscale Serve: whether the proxy takes that route.
+    tailnet_check: Mutex<tailnet::RouteCheck>,
+    /// HTTPS certificates are off on the tailnet, as the last Tailscale Serve setup found.
+    tailnet_https_off: Mutex<bool>,
+    /// One Tailscale Serve setup at a time.
+    serving_tailnet: tokio::sync::Mutex<()>,
 }
 
 impl MachineRuntime {
@@ -200,6 +206,9 @@ impl MachineRuntime {
             tailnet_join: Mutex::new(None),
             joining_tailnet: tokio::sync::Mutex::new(()),
             tailnet_cancel: tokio::sync::Notify::new(),
+            tailnet_check: Mutex::new(tailnet::RouteCheck::default()),
+            tailnet_https_off: Mutex::new(false),
+            serving_tailnet: tokio::sync::Mutex::new(()),
         };
         if let Some(shell) = shell {
             this.set_projects_from(&shell);
@@ -260,6 +269,8 @@ impl MachineRuntime {
             if p != Power::Running {
                 *self.watchdog.lock().unwrap() = None;
             }
+            // Checked anew once it runs: it may come back with another address, or none.
+            self.reset_tailnet_check();
             self.shared.changed();
         }
     }
@@ -934,8 +945,18 @@ impl MachineRuntime {
                             this.refresh_projects().await;
                             this.refresh_connect().await;
                         }
+                        // On every wake, so it holds across sleeps and restores; until it is
+                        // on, at every link check too (agents may have kept T3 from restarting).
+                        let record = this.record();
+                        if record.tailscale
+                            && (came_up || record.tailnet_url.is_none())
+                            && let Err(e) = this.ensure_tailnet_serve().await
+                        {
+                            tracing::warn!("Tailscale Serve on {}: {e:#}", this.id());
+                        }
                     });
                 }
+                self.check_tailnet_route().await;
                 // Retries a send that failed during the wake.
                 self.flush_deferred_commands().await;
                 match self.watchdog_get("/status").await {
