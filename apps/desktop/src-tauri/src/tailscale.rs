@@ -137,12 +137,25 @@ impl Status {
         self.backend_state == "NeedsMachineAuth"
     }
 
-    /// The sign-in page, if it is one to open: only an https URL leaves the machine for a browser.
+    /// The sign-in page, if it is one to open. The machine reports it, and a disk started from
+    /// someone else's snapshot is untrusted, so only Tailscale's own sign-in page (https, no
+    /// credentials, default port, under /a/) is ever handed to the browser.
     pub fn sign_in_url(&self) -> Option<&str> {
-        let url = self.auth_url.trim();
-        url.starts_with("https://").then_some(url)
+        let raw = self.auth_url.trim();
+        let url = url::Url::parse(raw).ok()?;
+        let ok = url.scheme() == "https"
+            && url.host_str() == Some(SIGN_IN_HOST)
+            && url.port().is_none()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.path().starts_with("/a/");
+        ok.then_some(raw)
     }
 }
+
+/// Where Tailscale's coordination server sends people to approve a device. t3boat only supports
+/// Tailscale's own control server, not a self-hosted one.
+const SIGN_IN_HOST: &str = "login.tailscale.com";
 
 #[cfg(test)]
 mod tests {
@@ -191,6 +204,17 @@ mod tests {
         // Only https reaches the browser.
         let odd = Status { backend_state: "NeedsLogin".into(), auth_url: "file:///etc/passwd".into() };
         assert_eq!(odd.sign_in_url(), None);
+        for bad in [
+            "https://evil.example/a/x",
+            "https://login.tailscale.com.evil.example/a/x",
+            "https://user@login.tailscale.com/a/x",
+            "https://login.tailscale.com:8443/a/x",
+            "https://login.tailscale.com/admin/settings/keys",
+            "http://login.tailscale.com/a/x",
+        ] {
+            let st = Status { auth_url: bad.into(), ..Default::default() };
+            assert_eq!(st.sign_in_url(), None, "{bad}");
+        }
     }
 
     #[test]
