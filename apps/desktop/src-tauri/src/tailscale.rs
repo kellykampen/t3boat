@@ -148,7 +148,10 @@ impl Status {
             && url.port().is_none()
             && url.username().is_empty()
             && url.password().is_none()
-            && url.path().starts_with("/a/");
+            && url.path().starts_with("/a/")
+            // Exactly what was checked, nothing a browser could read differently (backslashes,
+            // whitespace, odd encodings are normalised by the parser, so they fail this).
+            && url.as_str() == raw;
         ok.then_some(raw)
     }
 }
@@ -211,6 +214,10 @@ mod tests {
             "https://login.tailscale.com:8443/a/x",
             "https://login.tailscale.com/admin/settings/keys",
             "http://login.tailscale.com/a/x",
+            "https://login.tailscale.com\\@evil.example/a/x",
+            "https://login.tailscale.com/a/x y",
+            "https://LOGIN.tailscale.com/a/x",
+            "https://login.tailscale.com/a/../admin",
         ] {
             let st = Status { auth_url: bad.into(), ..Default::default() };
             assert_eq!(st.sign_in_url(), None, "{bad}");
