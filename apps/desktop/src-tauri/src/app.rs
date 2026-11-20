@@ -386,6 +386,11 @@ impl App {
         Ok(machine)
     }
 
+    /// The user's saved Boat snapshots a new machine can start from: ready, newest first.
+    pub async fn snapshots(&self) -> Result<Vec<crate::boat::Snapshot>> {
+        self.shared.boat.snapshots().await
+    }
+
     /// This computer's T3 projects that can go to a machine: those with a git remote.
     pub async fn local_projects(&self) -> Result<Vec<crate::projects::Project>> {
         self.shared.t3.projects().await

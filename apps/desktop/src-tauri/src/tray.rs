@@ -408,6 +408,12 @@ async fn create_machine(
         .map_err(err)
 }
 
+/// The user's saved Boat snapshots a new machine can start from.
+#[tauri::command]
+async fn list_snapshots(ui: State<'_, Ui>) -> Res<Vec<crate::boat::Snapshot>> {
+    ui.app()?.snapshots().await.map_err(err)
+}
+
 /// This computer's T3 projects that can go to a machine.
 #[tauri::command]
 async fn local_projects(ui: State<'_, Ui>) -> Res<Vec<crate::projects::Project>> {
@@ -588,6 +594,7 @@ pub fn run() {
             get_state,
             create_machine,
             local_projects,
+            list_snapshots,
             add_project,
             wake_machine,
             sleep_machine,

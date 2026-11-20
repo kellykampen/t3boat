@@ -2,10 +2,11 @@
 // URL params shape the starting state: ?setup=installBoat|signInBoat|installT3|starting
 // ?machines=0|many|<count>  ?busy=1  ?mcp=mixed (Claude Code added, Codex not installed)
 // ?projects=0|error (T3 Code has no projects with a remote / listing them fails)
+// ?snapshots=0|error|slow (no saved Boat snapshots / listing them fails / takes 30s)
 // ?ready=1 (a new machine comes up in T3 Code with its agents signed in and acme on it, as the website shows it)
 import type { Backend } from "./api";
 import { timeLapse } from "./pixel/clock";
-import type { CommandArgs, CommandName, LocalProject, MachineDetails, MachineProject, MachineView, Setup, UiState } from "./types";
+import type { CommandArgs, CommandName, LocalProject, SavedSnapshot, MachineDetails, MachineProject, MachineView, Setup, UiState } from "./types";
 
 const params = new URLSearchParams(location.search);
 
@@ -28,6 +29,17 @@ const LOCAL_PROJECTS: LocalProject[] = [
   { id: "p2", title: "website", path: "/Users/you/Documents/Dev/website", repoKey: "github.com/you/website", icon: null },
   { id: "p3", title: "acme", path: "/Users/you/Documents/Dev/acme", repoKey: "github.com/you/acme", icon: null },
   { id: "p4", title: "dotfiles", path: "/Users/you/dotfiles", repoKey: "github.com/you/dotfiles", icon: null },
+];
+
+const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
+
+/** Saved Boat snapshots, newest first: devbox's sleep snapshot, one of a machine since deleted, and hand-made ones. */
+const SNAPSHOTS: SavedSnapshot[] = [
+  { name: "t3boat-devbox-sb-e4d1", createdAt: daysAgo(0.12), sourceSandboxId: "sb_e4d1", status: "ready" },
+  { name: "node-22-stack", createdAt: daysAgo(2.3), sourceSandboxId: "sb_19c0", status: "ready" },
+  { name: "t3boat-old-spike-sb-77aa", createdAt: daysAgo(6), sourceSandboxId: "sb_77aa", status: "ready" },
+  { name: "base-tools", createdAt: daysAgo(12), sourceSandboxId: "sb_5c3e", status: "ready" },
+  { name: "postgres-16-seeded", createdAt: daysAgo(41), sourceSandboxId: "sb_7f2a", status: "ready" },
 ];
 
 /** An idle machine's detail: sleeps 5 minutes from now. */
@@ -193,6 +205,12 @@ function create(): MockBackend {
       await wait(400);
       if (params.get("projects") === "error") throw "T3 Code is not running";
       return params.get("projects") === "0" ? [] : LOCAL_PROJECTS;
+    },
+
+    async list_snapshots() {
+      await wait(params.get("snapshots") === "slow" ? 30_000 : 500);
+      if (params.get("snapshots") === "error") throw "boat snapshots failed: not signed in";
+      return params.get("snapshots") === "0" ? [] : SNAPSHOTS;
     },
 
     async add_project({ id, projectId }) {

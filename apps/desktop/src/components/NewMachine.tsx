@@ -3,6 +3,7 @@ import type { UiState } from "../types";
 import { cleanName, hourly, NAME_RE, SNAPSHOT_RE, suggestName } from "../machine";
 import { Icon } from "./Icons";
 import { ProjectList, useLocalProjects } from "./ProjectPicker";
+import { SnapshotPicker } from "./SnapshotPicker";
 import { SubHeader } from "./SubHeader";
 
 interface Props {
@@ -132,27 +133,21 @@ export function NewMachine({ state, onNameChange, onCreate, onBack }: Props) {
           <label className="caption" htmlFor="machine-snapshot">
             start from snapshot
           </label>
-          <span className="prompt-input">
-            <span className="prompt-sign" aria-hidden>
-              $
-            </span>
-            <input
-              id="machine-snapshot"
-              aria-describedby="machine-snapshot-hint"
-              value={snapshot}
-              onChange={(e) => setSnapshot(e.target.value.trim())}
-              placeholder="snapshot name or bsh_ share code"
-              spellCheck={false}
-              autoComplete="off"
-              autoCapitalize="off"
-              aria-invalid={!!snapshotProblem}
-            />
-          </span>
+          <SnapshotPicker
+            id="machine-snapshot"
+            describedBy="machine-snapshot-hint"
+            value={snapshot}
+            onChange={setSnapshot}
+            machines={state.machines}
+            invalid={!!snapshotProblem}
+          />
           <span id="machine-snapshot-hint" className={`hint${snapshotProblem ? " is-error" : ""}`}>
             {snapshotProblem ??
               (snapshot.startsWith("bsh_")
                 ? "Share code: someone else's disk. It gets your sessions and project .env files, so only use codes you trust"
-                : "Optional · a saved Boat snapshot's files and tools, with a fresh T3 Code")}
+                : snapshot
+                  ? "Its files and tools, with a fresh T3 Code"
+                  : "Optional · a saved Boat snapshot's files and tools, with a fresh T3 Code")}
           </span>
         </div>
       </div>

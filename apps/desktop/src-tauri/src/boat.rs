@@ -1,7 +1,7 @@
 //! Thin wrapper over the user's own Boat CLI. Uses its existing login; never stores Boat credentials.
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -43,6 +43,18 @@ pub struct ExecResult {
 pub struct Usage {
     pub dollars: f64,
     pub seconds: u64,
+}
+
+/// A saved (named) snapshot a new machine can start from.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub name: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// The sandbox it was taken of; Boat may not say.
+    #[serde(default)]
+    pub source_sandbox_id: Option<String>,
+    pub status: String,
 }
 
 /// A pending browser sign-in: the page that completes it, and the code that page may ask for.
@@ -159,6 +171,11 @@ impl Boat {
         }
     }
 
+    /// The saved snapshots a machine can start from: ready ones only, newest first.
+    pub async fn snapshots(&self) -> Result<Vec<Snapshot>> {
+        parse_snapshots(&self.run(&["snapshots", "--all"], Duration::from_secs(30)).await?)
+    }
+
     pub async fn delete_snapshot(&self, name: &str) -> Result<()> {
         self.run(&["snapshot", "rm", name], Duration::from_secs(60)).await.map(drop)
     }
@@ -273,6 +290,31 @@ impl Boat {
     }
 }
 
+/// `boat snapshots --all` output: the `named` arrays of every JSON line (one per page, should
+/// the CLI print pages separately), ready ones only, each name once, newest first. An item Boat
+/// words differently is skipped rather than failing the whole list.
+fn parse_snapshots(out: &str) -> Result<Vec<Snapshot>> {
+    let pages: Vec<Value> = out
+        .lines()
+        .filter(|l| l.trim_start().starts_with('{'))
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    if pages.is_empty() {
+        bail!("boat printed no JSON: {out}");
+    }
+    let mut list: Vec<Snapshot> = pages
+        .iter()
+        .filter_map(|p| p["named"].as_array())
+        .flatten()
+        .filter_map(|v| serde_json::from_value::<Snapshot>(v.clone()).ok())
+        .filter(|s| s.status == "ready")
+        .collect();
+    list.sort_by_key(|s| std::cmp::Reverse(s.created_at));
+    let mut seen = std::collections::HashSet::new();
+    list.retain(|s| seen.insert(s.name.clone()));
+    Ok(list)
+}
+
 /// What a failed command said: its stderr, else its stdout.
 fn said<'a>(stdout: &'a str, stderr: &'a str) -> &'a str {
     if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() }
@@ -281,4 +323,33 @@ fn said<'a>(stdout: &'a str, stderr: &'a str) -> &'a str {
 /// Command-line form of a path; the Boat CLI and git only take UTF-8 here.
 pub(crate) fn path_str(path: &Path) -> Result<&str> {
     path.to_str().ok_or_else(|| anyhow!("path is not UTF-8: {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lists_ready_named_snapshots_newest_first() {
+        let page1 = r#"{"named":[{"createdAt":"2026-11-19T04:18:16.029Z","name":"t3boat-skiff-bx-xnfee34h","snapshotId":"03e5","sourceSandboxId":"bx_xnfee34h","status":"ready","type":"default"},{"createdAt":"2026-11-10T09:00:00Z","name":"base-tools","snapshotId":"a1","sourceSandboxId":"bx_old","status":"ready","type":"default"},{"createdAt":"2026-11-20T09:00:00Z","name":"half-done","snapshotId":"a2","sourceSandboxId":"bx_new","status":"pending","type":"default"},{"name":"no-date","status":"ready"}],"pageInfo":{"hasMore":true},"snapshots":[{"id":"x","status":"completed"}]}"#;
+        let page2 = r#"{"named":[{"createdAt":"2026-11-18T12:00:00Z","name":"node-22-stack","snapshotId":"b1","status":"ready","type":"default"},{"createdAt":"2026-11-19T04:18:16.029Z","name":"t3boat-skiff-bx-xnfee34h","snapshotId":"03e5","sourceSandboxId":"bx_xnfee34h","status":"ready","type":"default"}],"pageInfo":{"hasMore":false}}"#;
+        let out = format!("warning: something\n{page1}\n{page2}\n");
+        let list = parse_snapshots(&out).unwrap();
+        let names: Vec<_> = list.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["t3boat-skiff-bx-xnfee34h", "node-22-stack", "base-tools"]);
+        assert_eq!(list[0].source_sandbox_id.as_deref(), Some("bx_xnfee34h"));
+        assert_eq!(list[1].source_sandbox_id, None);
+
+        let json = serde_json::to_value(&list[0]).unwrap();
+        assert_eq!(json["createdAt"], "2026-11-19T04:18:16.029Z");
+        assert_eq!(json["sourceSandboxId"], "bx_xnfee34h");
+        assert_eq!(json["status"], "ready");
+    }
+
+    #[test]
+    fn snapshots_without_any_or_without_json() {
+        assert!(parse_snapshots(r#"{"named":[],"snapshots":[]}"#).unwrap().is_empty());
+        assert!(parse_snapshots(r#"{"snapshots":[]}"#).unwrap().is_empty());
+        assert!(parse_snapshots("not signed in").is_err());
+    }
 }
