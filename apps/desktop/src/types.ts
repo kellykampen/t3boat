@@ -27,6 +27,9 @@ export interface MachineView {
   keepAwakeForever: boolean; // kept awake until someone stops it: no auto sleep
   tailscale: boolean; // on the user's tailnet as t3boat-<name> (joined when created, or with a browser sign-in)
   tailscaleJoin: TailscaleJoin | null; // a browser sign-in to the tailnet in progress, or how the last one failed
+  tailnetUrl: string | null; // its T3 over Tailscale Serve HTTPS (https://t3boat-<name>.<tailnet>.ts.net), once published
+  tailnetRoute: boolean; // t3boat's proxy reaches it over the tailnet right now (else over Boat's URL)
+  tailnetHttpsOff: boolean; // HTTPS certificates are off on the tailnet: it can't be published there
 }
 
 /** `tailscale_connect`'s progress. `url`: the sign-in page; null while a tailnet admin must approve the device. */
@@ -135,6 +138,8 @@ export interface Commands {
   tailscale_connect: [{ id: string }, boolean]; // browser sign-in; true once on the tailnet, false if cancelled
   tailscale_open_sign_in: [{ id: string }, void]; // opens the waiting join's sign-in page again
   tailscale_cancel: [{ id: string }, void];
+  tailscale_pairing_link: [{ id: string }, void]; // copies a one-time pairing link over the tailnet URL (wakes it)
+  tailscale_open_https_settings: [undefined, void]; // opens https://login.tailscale.com/admin/dns
   setup_action: [{ action: SetupAction }, void];
   quit_app: [undefined, void];
 }

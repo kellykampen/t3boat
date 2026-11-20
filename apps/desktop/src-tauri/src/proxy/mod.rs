@@ -306,6 +306,9 @@ struct Relay {
     authorization: Option<HeaderValue>,
     /// Whether it may wake a sleeping machine. If not, a sleeping machine answers 503.
     wake: bool,
+    /// Whether it may go over the tailnet when the machine answers there (`route_url`). Not
+    /// for linking: the server ties a link's token to the address it was issued for, Boat's.
+    tailnet: bool,
 }
 
 /// Everything without a route of its own. Its sockets (dictation, and whatever T3 adds) are
@@ -341,6 +344,7 @@ async fn forward(State(m): M, req: Request) -> Response {
         target: target(&parts.uri),
         authorization: if bearer { upstream_bearer(&m) } else { None },
         wake: authorized,
+        tailnet: true,
     };
     let answer = relay(&m, parts, body, route).await;
     // A range of it (206) is not the asset.
@@ -363,8 +367,8 @@ async fn relay(m: &MachineRuntime, parts: Parts, body: Body, route: Relay) -> Re
     let Ok(body) = axum::body::to_bytes(body, MAX_BODY).await else {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     };
-    let send = || {
-        let url = format!("{}{}", m.upstream_url(), route.target);
+    let send = |base: &str| {
+        let url = format!("{base}{}", route.target);
         let mut rb = m.shared.http.request(parts.method.clone(), url).body(body.clone());
         for (k, v) in &parts.headers {
             // The credential is the route's, and the body's length is what is sent here.
@@ -378,15 +382,36 @@ async fn relay(m: &MachineRuntime, parts: Parts, body: Body, route: Relay) -> Re
         }
         rb.send()
     };
-    let first = send().await;
+    // Over the tailnet while the machine answers there. Its failure is Tailscale's, not the
+    // machine's (Serve answers 502 while T3 restarts): Boat's URL then, from now on.
+    let mut first = None;
+    if route.tailnet
+        && let Some(tailnet) = m.tailnet_route()
+    {
+        let res = send(&tailnet).await;
+        match &res {
+            Ok(r) if !unreachable_status(r.status()) => first = Some(res),
+            Ok(r) => {
+                tracing::warn!("{} over the tailnet: HTTP {}", m.id(), r.status());
+                m.tailnet_failed();
+            }
+            Err(e) => {
+                tracing::warn!("{} over the tailnet: {e}", m.id());
+                m.tailnet_failed();
+            }
+        }
+    }
+    if let Some(Ok(res)) = first {
+        return stream_back(res);
+    }
+    let first = send(&m.upstream_url()).await;
     // Maybe never reached the machine: Boat answers for a sandbox that does not run itself (a
     // redirect to its fallback page, a gateway error). If it fell asleep since the last poll,
     // wake it and send once more.
     let unreached = match &first {
         Ok(r) => {
             let s = r.status();
-            (s.is_redirection() && s != StatusCode::NOT_MODIFIED)
-                || matches!(s, StatusCode::BAD_GATEWAY | StatusCode::SERVICE_UNAVAILABLE | StatusCode::GATEWAY_TIMEOUT)
+            (s.is_redirection() && s != StatusCode::NOT_MODIFIED) || unreachable_status(s)
         }
         Err(e) => e.is_connect(),
     };
@@ -394,14 +419,23 @@ async fn relay(m: &MachineRuntime, parts: Parts, body: Body, route: Relay) -> Re
         if let Err(res) = wake(m, route.wake).await {
             return res;
         }
-        send().await
+        send(&m.upstream_url()).await
     } else {
         first
     };
-    let res = match res {
-        Ok(r) => r,
-        Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
-    };
+    match res {
+        Ok(r) => stream_back(r),
+        Err(e) => (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+    }
+}
+
+/// A gateway's answer for a server it could not reach.
+fn unreachable_status(s: StatusCode) -> bool {
+    matches!(s, StatusCode::BAD_GATEWAY | StatusCode::SERVICE_UNAVAILABLE | StatusCode::GATEWAY_TIMEOUT)
+}
+
+/// The machine's answer, streamed back unbuffered.
+fn stream_back(res: reqwest::Response) -> Response {
     let mut out = Response::builder().status(res.status());
     for (k, v) in res.headers() {
         if !HOP_BY_HOP.contains(&k.as_str()) {

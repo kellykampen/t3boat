@@ -23,7 +23,7 @@ const MAX_STEP_BODY: usize = 64 * 1024;
 /// A step of linking. Anyone can call these, so they never wake the machine; whoever links got
 /// a pairing code from it moments ago.
 fn step(parts: &Parts) -> Relay {
-    Relay { target: target(&parts.uri), authorization: None, wake: false }
+    Relay { target: target(&parts.uri), authorization: None, wake: false, tailnet: false }
 }
 
 /// What the machine's server calls itself. The linker asks for a token for the address it
@@ -123,6 +123,7 @@ pub async fn mcp(State(m): M, req: Request) -> Response {
         target: target(&parts.uri),
         authorization: parts.headers.get(header::AUTHORIZATION).cloned(),
         wake: call,
+        tailnet: false,
     };
     relay(&m, parts, Body::from(body), route).await
 }

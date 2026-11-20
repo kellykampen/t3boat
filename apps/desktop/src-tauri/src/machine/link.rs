@@ -29,24 +29,29 @@ impl MachineRuntime {
         if t3.links().await?.iter().any(|l| l.environment_id == record.environment_id && l.expires_at > renew_at) {
             return Ok(());
         }
-        let code = self.pairing_code().await?;
+        let code = self.pairing_credential("t3boat link", Some(SCOPES)).await?;
         t3.link(&format!("http://localhost:{}", record.local_port), &code, ACCESS).await?;
         tracing::info!("linked {} into T3 Code", self.id());
         Ok(())
     }
 
-    /// A one-time code from the machine's server that lets a T3 server link to it.
-    async fn pairing_code(&self) -> Result<String> {
+    /// A one-time code from the machine's server that pairs a client (or lets a T3 server
+    /// link) with it. `scopes`: none for the server's standard client scopes.
+    pub(super) async fn pairing_credential(&self, label: &str, scopes: Option<&[&str]>) -> Result<String> {
         #[derive(Deserialize)]
         struct Pairing {
             credential: String,
+        }
+        let mut body = json!({ "label": label });
+        if let Some(scopes) = scopes {
+            body["scopes"] = json!(scopes);
         }
         let pairing: Pairing = self
             .shared
             .http
             .post(format!("{}/api/auth/pairing-token", self.upstream_url()))
             .bearer_auth(self.upstream_token())
-            .json(&json!({"label": "t3boat link", "scopes": SCOPES}))
+            .json(&body)
             .timeout(Duration::from_secs(10))
             .send()
             .await?

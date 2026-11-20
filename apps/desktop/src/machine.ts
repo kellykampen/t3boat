@@ -39,6 +39,8 @@ export type Action = {
   | { cmd: "pair_machine" | "wake_machine" | "sleep_machine" | "turn_on_connect" }
   /** the tailnet's browser sign-in: never a tracked action, its progress is `tailscaleJoin` */
   | { cmd: "tailscale_connect" | "tailscale_open_sign_in" | "tailscale_cancel" }
+  /** copies a one-time pairing link over its Tailscale Serve address; opens the tailnet's HTTPS settings */
+  | { cmd: "tailscale_pairing_link" | "tailscale_open_https_settings" }
   | { cmd: "resize_machine"; size: string }
   /** null = until stopped (auto sleep off), 0 ends it */
   | { cmd: "keep_awake"; minutes: number | null }
@@ -70,6 +72,8 @@ export const ACTIONS = {
   tailnet: { cmd: "tailscale_connect", label: "Connect to tailnet", busy: "Connecting…" },
   tailnetLink: { cmd: "tailscale_open_sign_in", label: "Open link", busy: "Opening…" },
   tailnetCancel: { cmd: "tailscale_cancel", label: "Cancel", busy: "Cancelling…" },
+  tailnetPair: { cmd: "tailscale_pairing_link", label: "Copy pairing link", busy: "Copying…" },
+  tailnetHttps: { cmd: "tailscale_open_https_settings", label: "Turn on", busy: "Opening…" },
   remove: { cmd: "delete_machine", label: "Remove", busy: "Removing…", discard: true },
   del: { cmd: "delete_machine", label: "Delete", busy: "Deleting…", discard: false },
   deleteAnyway: { cmd: "delete_machine", label: "Delete anyway", busy: "Deleting…", discard: true },

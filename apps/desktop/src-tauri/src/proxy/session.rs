@@ -380,10 +380,10 @@ impl Session {
     fn connect(&mut self) {
         self.phase = Phase::Connecting;
         self.connect_attempts += 1;
-        let (url, token, query) = (self.m.upstream_url(), self.m.upstream_token(), self.query.clone());
+        let (m, target) = (self.m.clone(), upstream::rpc_target(&self.query));
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            let _ = tx.send(Internal::Connected(upstream::connect(&url, &token, &upstream::rpc_target(&query)).await));
+            let _ = tx.send(Internal::Connected(upstream::connect_machine(&m, &target).await));
         });
     }
 

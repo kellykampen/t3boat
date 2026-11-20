@@ -463,6 +463,24 @@ button.row-name {
   flex: none;
   gap: 5px;
 }
+/* its T3 over Tailscale Serve: the address, and whether t3boat goes that way now */
+.line-tailnet-url .line-host {
+  white-space: normal;
+  line-height: 1.35;
+  padding: 7px 0;
+}
+/* the host stays whole: a break goes after the scheme */
+.line-tailnet-url .host-name {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.chip-route {
+  flex: none;
+}
 .line-error {
   color: var(--danger);
   overflow-wrap: anywhere;

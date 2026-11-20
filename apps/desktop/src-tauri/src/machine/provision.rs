@@ -224,6 +224,7 @@ pub async fn create(
         next_due_at: None,
         connect: false,
         tailscale: tailscale.is_some(),
+        tailnet_url: None,
     })
 }
 

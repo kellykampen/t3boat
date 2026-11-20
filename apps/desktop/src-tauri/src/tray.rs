@@ -545,6 +545,21 @@ fn tailscale_cancel(ui: State<'_, Ui>, id: String) -> Res {
     Ok(())
 }
 
+/// Copies a one-time link that pairs T3 Code on another device of the tailnet with the machine,
+/// over Tailscale Serve HTTPS. Wakes it.
+#[tauri::command]
+async fn tailscale_pairing_link(ui: State<'_, Ui>, id: String) -> Res {
+    let app = ui.app()?;
+    let machine = app.machine(&id).map_err(err)?;
+    app.copy_tailnet_pairing_link(&machine).await.map_err(err)
+}
+
+/// Opens the tailnet's DNS settings, where HTTPS certificates are turned on.
+#[tauri::command]
+fn tailscale_open_https_settings() -> Res {
+    app::open_url(crate::tailscale::HTTPS_SETTINGS_URL).map_err(err)
+}
+
 #[tauri::command]
 async fn remove_tailscale_key(ui: State<'_, Ui>) -> Res {
     ui.app()?.remove_tailscale_key().await.map_err(err)
@@ -656,6 +671,8 @@ pub fn run() {
             tailscale_connect,
             tailscale_open_sign_in,
             tailscale_cancel,
+            tailscale_pairing_link,
+            tailscale_open_https_settings,
             setup_action,
             add_mcp,
             quit_app
