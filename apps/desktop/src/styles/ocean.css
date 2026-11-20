@@ -124,14 +124,29 @@
   text-shadow: 1px 1px 0 rgb(6 10 30 / 0.6);
 }
 
-.btn-on-sea {
+/* A white icon on the same dark backing as the name, framed so it reads as a button. Scoped
+   under .ocean so it outranks .btn-icon's muted colour, which loads later. */
+.ocean .btn.btn-on-sea {
   position: absolute;
   top: 10px;
   right: 12px;
+  width: 30px;
+  height: 30px;
   color: #fff;
-  border-color: rgb(255 255 255 / 0.45);
+  background: rgb(6 10 30 / 0.34);
+  border: 1px solid rgb(255 255 255 / 0.7);
+  box-shadow: 1px 1px 0 rgb(6 10 30 / 0.6);
 }
-.btn-on-sea:hover {
+.ocean .btn.btn-on-sea:hover,
+.ocean .btn.btn-on-sea.is-open {
   color: #fff;
-  background: rgb(255 255 255 / 0.16);
+  background: rgb(6 10 30 / 0.55);
+  border-color: #fff;
+}
+.ocean .btn.btn-on-sea:active:not(:disabled) {
+  background: rgb(6 10 30 / 0.7);
+}
+.ocean .btn.btn-on-sea:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
