@@ -60,7 +60,17 @@ To let Claude Code or Codex on your computer manage machines, click "Add" next t
 
 ## Tailscale
 
-t3boat can put new machines on your [Tailscale](https://tailscale.com) tailnet, with [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh) on, so you can `ssh user@t3boat-<name>` from your own devices. T3 Code keeps connecting the usual way; Tailscale is extra.
+t3boat can put machines on your [Tailscale](https://tailscale.com) tailnet, with [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh) on, so you can `ssh user@t3boat-<name>` from your own devices. T3 Code keeps connecting the usual way; Tailscale is extra.
+
+In t3boat's Settings → Tailscale, pick **Browser**. Each new machine then opens a Tailscale sign-in page once it is up; click Connect there and it joins as `t3boat-<name>`. Creating a machine never waits for you: the sign-in comes after. A machine from before, or one whose sign-in you skipped, has a Connect button in its details (and "Connect to tailnet" in its ⋯ menu); it wakes for it and stays awake while you sign in.
+
+A machine joined this way belongs to you, like a laptop you signed in on: its key expires after 180 days unless you disable key expiry for it in the admin console. Tailscale's default access rules already let you SSH to your own devices (`autogroup:self`, with a browser check now and then); with custom rules, allow `user` on them.
+
+A sleeping machine shows as offline and comes back when it wakes. Deleting an awake machine logs it out of the tailnet; delete an asleep one and remove its offline node in the admin console.
+
+### Advanced: auth key
+
+For machines that join without a sign-in and never expire, pick **Auth key** instead:
 
 1. In the Tailscale admin console, define a tag for the machines and an SSH rule (Access controls):
 
@@ -83,7 +93,7 @@ t3boat can put new machines on your [Tailscale](https://tailscale.com) tailnet, 
 2. Under Settings → Keys, generate an auth key that is **reusable**, **pre-approved** and **tagged** `tag:t3boat` (tagged nodes don't expire).
 3. Paste it in t3boat's Settings → Tailscale and click Save. It is kept in your system keychain (macOS Keychain), nowhere else.
 
-Machines created from then on join as `t3boat-<name>`. A sleeping machine shows as offline and comes back when it wakes. Existing machines are left alone. Deleting an awake machine logs it out of the tailnet; delete an asleep one and remove its offline node in the admin console.
+Machines created from then on join with it as `t3boat-<name>` while they are created. Connect on an existing machine still signs in with the browser.
 
 ## Development
 

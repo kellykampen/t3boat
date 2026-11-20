@@ -2,9 +2,10 @@
 //! both drive it.
 
 use crate::boat::{Boat, Starts};
+use crate::machine::tailnet::TailnetJoin;
 use crate::machine::{provision, Event, MachineRuntime, Power, Shared, WatchdogPhase};
 use crate::proxy;
-use crate::store::{Settings, Spend, State, Store};
+use crate::store::{Settings, Spend, State, Store, TailscaleMode};
 use crate::t3desktop::T3Desktop;
 use crate::tailscale::{self, AuthKey};
 use anyhow::{anyhow, bail, Context, Result};
@@ -75,8 +76,10 @@ pub struct MachineView {
     /// When a "keep awake" runs out (unix ms); none when off or until stopped.
     pub keep_awake_until: Option<u64>,
     pub keep_awake_forever: bool,
-    /// It joined the user's tailnet as `t3boat-<name>` when it was created.
+    /// It joined the user's tailnet as `t3boat-<name>` (when created, or with a browser sign-in).
     pub tailscale: bool,
+    /// A browser sign-in to the tailnet in progress, or how the last one failed.
+    pub tailscale_join: Option<TailnetJoin>,
 }
 
 /// `detail` as `template` with `{left}` filled in: the time left until `ends_at` (unix ms).
@@ -292,10 +295,17 @@ impl App {
         self.tailscale_key.load(Ordering::Relaxed)
     }
 
-    /// Saves the key to the keychain; machines created from now on join with it.
+    pub fn tailscale_mode(&self) -> TailscaleMode {
+        self.settings().tailscale
+    }
+
+    /// Saves the key to the keychain; machines created from now on join with it ("key" mode).
     pub async fn set_tailscale_key(&self, key: &str) -> Result<()> {
         let key = AuthKey::parse(key)?;
         tokio::task::spawn_blocking(move || tailscale::save(&key)).await??;
+        if self.tailscale_mode() != TailscaleMode::Key {
+            self.update_settings(Settings { tailscale: TailscaleMode::Key, ..self.settings() });
+        }
         self.set_tailscale_flag(true);
         Ok(())
     }
@@ -313,9 +323,10 @@ impl App {
         self.shared.changed();
     }
 
-    /// The key a new machine joins with; read from the keychain only when one was saved.
+    /// The key a new machine joins with, in "key" mode; read from the keychain only when one
+    /// was saved.
     async fn tailscale_key(&self) -> Result<Option<AuthKey>> {
-        if !self.tailscale_configured() {
+        if self.tailscale_mode() != TailscaleMode::Key || !self.tailscale_configured() {
             return Ok(None);
         }
         match tokio::task::spawn_blocking(tailscale::load).await?? {
@@ -415,6 +426,15 @@ impl App {
                 }
             }
         });
+        // Never during the create: that would wait on a person. The sign-in page opens as it is up.
+        if self.tailscale_mode() == TailscaleMode::Browser {
+            let (app, m) = (self.clone(), machine.clone());
+            tokio::spawn(async move {
+                if let Err(e) = app.connect_tailnet(&m).await {
+                    app.shared.notify(format!("{} isn't on your tailnet", m.record().name), format!("{e:#}"));
+                }
+            });
+        }
         // The machine exists either way; its row still offers "Add to T3 Code".
         if let Err(e) = self.pair(&machine) {
             self.shared.notify(format!("Couldn't open T3 Code for {name}"), format!("{e:#}; use Add to T3 Code"));
@@ -448,6 +468,20 @@ impl App {
         Ok(project)
     }
 
+    /// Joins the machine to the user's tailnet with a browser sign-in: Tailscale's page opens
+    /// here. True once on it (up to 10 min), false if cancelled. Any machine, old ones too.
+    pub async fn connect_tailnet(&self, machine: &MachineRuntime) -> Result<bool> {
+        machine.join_tailnet().await
+    }
+
+    /// Opens the sign-in page of the machine's join again (closed by mistake, say).
+    pub fn open_tailnet_sign_in(&self, machine: &MachineRuntime) -> Result<()> {
+        match machine.tailnet_sign_in_url() {
+            Some(url) => open_url(&url),
+            None => bail!("{} isn't waiting for a Tailscale sign-in", machine.record().name),
+        }
+    }
+
     /// Opens T3 Code's own "add backend" confirmation for this machine.
     pub fn pair(&self, machine: &MachineRuntime) -> Result<()> {
         let code = machine.auth.new_pairing_code();
@@ -465,6 +499,7 @@ impl App {
         if !discard {
             machine.check_idle_before_delete().await?;
         }
+        machine.cancel_tailnet_join();
         let boat = &self.shared.boat;
         let record = {
             // Held until retired: a later wake then sees Missing, and none restores meanwhile.
@@ -534,6 +569,7 @@ impl App {
                 keep_awake_until: None,
                 keep_awake_forever: false,
                 tailscale: false,
+                tailscale_join: None,
             });
         }
         views
@@ -756,6 +792,7 @@ fn view(m: &MachineRuntime) -> MachineView {
             .map(|w| unix_ms_after(w.received, w.keep_awake_secs)),
         keep_awake_forever: running_watchdog.is_some_and(|w| w.keep_awake_forever),
         tailscale: r.tailscale,
+        tailscale_join: m.tailnet_join(),
     }
 }
 

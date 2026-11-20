@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
-import type { McpClient, Settings, UiState } from "../types";
+import type { McpClient, Settings, TailscaleMode, UiState } from "../types";
 import { AgentName, AgentNames } from "./AgentLogos";
 import { Icon } from "./Icons";
 import { Dots } from "./common";
@@ -8,6 +8,12 @@ import { SubHeader } from "./SubHeader";
 const CLIENTS: { id: McpClient; name: string }[] = [
   { id: "claudeCode", name: "Claude Code" },
   { id: "codex", name: "Codex" },
+];
+
+const MODES: { id: TailscaleMode; label: string; note: string }[] = [
+  { id: "off", label: "Off", note: "not joined" },
+  { id: "browser", label: "Browser", note: "recommended" },
+  { id: "key", label: "Auth key", note: "advanced" },
 ];
 
 interface Props {
@@ -145,62 +151,83 @@ export function SettingsView({
           </span>
         </div>
         <div className="setting">
-          <label className="caption" htmlFor="tailscale-key">
+          <span className="caption" id="tailscale-caption">
             tailscale
-          </label>
-          <span className="setting-name">Join new machines to your tailnet</span>
-          {state.tailscale.configured && !replacing ? (
-            <div className="tailscale-row is-saved">
-              <span className="mcp-added">
-                <Icon name="check" size={10} />
-                <span>Key saved · new machines join your tailnet</span>
-              </span>
-              <button className="btn btn-sm btn-quiet" disabled={tsBusy} onClick={() => setReplacing(true)}>
-                Replace
-              </button>
-              <button className="btn btn-sm btn-quiet" disabled={tsBusy} aria-busy={tsBusy} onClick={removeKey}>
-                Remove
-              </button>
-            </div>
-          ) : (
-            <form className={`tailscale-row${replacing ? " is-replacing" : ""}`} onSubmit={saveKey}>
-              <span className="prompt-input tailscale-input">
-                <input
-                  id="tailscale-key"
-                  autoFocus={replacing}
-                  type="password"
-                  placeholder="tskey-auth-…"
-                  aria-describedby="tailscale-hint"
-                  value={tsKey}
-                  onChange={(e) => setTsKey(e.target.value)}
-                  spellCheck={false}
-                  autoComplete="off"
-                />
-              </span>
+          </span>
+          <span className="setting-name">Join machines to your tailnet</span>
+          <div className="segmented tailscale-modes" role="radiogroup" aria-labelledby="tailscale-caption">
+            {MODES.map((o) => (
               <button
-                type="submit"
-                className="btn btn-sm btn-outline"
-                disabled={!tsKey.trim() || tsBusy}
-                aria-busy={tsBusy}
+                key={o.id}
+                role="radio"
+                aria-checked={s.tailscale === o.id}
+                className={s.tailscale === o.id ? "is-on" : undefined}
+                onClick={() => s.tailscale !== o.id && change({ tailscale: o.id })}
               >
-                {tsBusy ? (
-                  <>
-                    <Dots /> Saving…
-                  </>
-                ) : (
-                  "Save"
-                )}
+                {o.label}
+                <small>{o.note}</small>
               </button>
-              {replacing ? (
-                <button type="button" className="btn btn-sm btn-quiet" disabled={tsBusy} onClick={cancelReplace}>
-                  Cancel
+            ))}
+          </div>
+          {s.tailscale === "key" ? (
+            state.tailscale.configured && !replacing ? (
+              <div className="tailscale-row is-saved">
+                <span className="mcp-added">
+                  <Icon name="check" size={10} />
+                  <span>Key saved · new machines join with it</span>
+                </span>
+                <button className="btn btn-sm btn-quiet" disabled={tsBusy} onClick={() => setReplacing(true)}>
+                  Replace
                 </button>
-              ) : null}
-            </form>
-          )}
+                <button className="btn btn-sm btn-quiet" disabled={tsBusy} aria-busy={tsBusy} onClick={removeKey}>
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <form className={`tailscale-row${replacing ? " is-replacing" : ""}`} onSubmit={saveKey}>
+                <span className="prompt-input tailscale-input">
+                  <input
+                    id="tailscale-key"
+                    aria-label="Tailscale auth key"
+                    autoFocus={replacing}
+                    type="password"
+                    placeholder="tskey-auth-…"
+                    aria-describedby="tailscale-hint"
+                    value={tsKey}
+                    onChange={(e) => setTsKey(e.target.value)}
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                </span>
+                <button
+                  type="submit"
+                  className="btn btn-sm btn-outline"
+                  disabled={!tsKey.trim() || tsBusy}
+                  aria-busy={tsBusy}
+                >
+                  {tsBusy ? (
+                    <>
+                      <Dots /> Saving…
+                    </>
+                  ) : (
+                    "Save"
+                  )}
+                </button>
+                {replacing ? (
+                  <button type="button" className="btn btn-sm btn-quiet" disabled={tsBusy} onClick={cancelReplace}>
+                    Cancel
+                  </button>
+                ) : null}
+              </form>
+            )
+          ) : null}
           <span className="hint" id="tailscale-hint">
-            Use a reusable, pre-authorized auth key tagged e.g. tag:t3boat. New machines join as t3boat-‹name› with
-            Tailscale SSH; asleep, they show as offline.
+            {s.tailscale === "browser"
+              ? "Sign in with your browser: each new machine opens a Tailscale sign-in page; click Connect. It joins as you, so its key expires after 180 days unless you disable key expiry for it in the admin console."
+              : s.tailscale === "key"
+                ? "New machines join with a saved auth key, no sign-in. Use a reusable, pre-authorized key tagged e.g. tag:t3boat."
+                : "New machines stay off your tailnet."}
+            {s.tailscale !== "off" ? " They show up as t3boat-‹name› with Tailscale SSH; asleep, as offline." : ""}
             {onTailnet ? ` ${onTailnet} ${onTailnet === 1 ? "machine is" : "machines are"} on your tailnet.` : ""}
           </span>
         </div>

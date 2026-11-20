@@ -463,3 +463,7 @@ button.row-name {
   flex: none;
   gap: 5px;
 }
+.line-error {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}

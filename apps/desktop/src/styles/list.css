@@ -244,3 +244,9 @@
 .chip-tailnet {
   color: var(--accent-text);
 }
+/* joining the tailnet: just its dots, the row's name keeps the room */
+.chip.chip-joining {
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+}

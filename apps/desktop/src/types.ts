@@ -25,8 +25,18 @@ export interface MachineView {
   projects: MachineProject[]; // its T3 projects as last seen (never wakes it), then those being added
   keepAwakeUntil: number | null; // when a "keep awake" runs out (unix ms); null when off or until stopped
   keepAwakeForever: boolean; // kept awake until someone stops it: no auto sleep
-  tailscale: boolean; // joined the user's tailnet as t3boat-<name> when it was created
+  tailscale: boolean; // on the user's tailnet as t3boat-<name> (joined when created, or with a browser sign-in)
+  tailscaleJoin: TailscaleJoin | null; // a browser sign-in to the tailnet in progress, or how the last one failed
 }
+
+/** `tailscale_connect`'s progress. `url`: the sign-in page; null while a tailnet admin must approve the device. */
+export type TailscaleJoin =
+  | { state: "starting" }
+  | { state: "waitingForSignIn"; url: string | null }
+  | { state: "error"; message: string };
+
+/** How machines join the tailnet: not at all, by signing in with the browser, or with a saved auth key. */
+export type TailscaleMode = "off" | "browser" | "key";
 
 export interface MachineProject {
   id: string; // T3's project id on the machine; while t3boat adds it, the local project's id
@@ -52,6 +62,7 @@ export interface Countdown {
 
 export interface Settings {
   startAtLogin: boolean;
+  tailscale: TailscaleMode;
 }
 
 export interface Size {
@@ -74,7 +85,7 @@ export interface UiState {
   sizes: Size[];
   /** null = that CLI isn't installed */
   mcp: Record<McpClient, boolean | null>;
-  /** a Tailscale auth key is saved (in the keychain); the key itself never reaches the UI */
+  /** a Tailscale auth key is saved (in the keychain; used in "key" mode); the key itself never reaches the UI */
   tailscale: { configured: boolean };
 }
 
@@ -112,6 +123,9 @@ export interface Commands {
   update_settings: [{ settings: Settings }, void];
   set_tailscale_key: [{ key: string }, void]; // saved to the keychain; new machines join the tailnet
   remove_tailscale_key: [undefined, void]; // machines already on the tailnet stay there
+  tailscale_connect: [{ id: string }, boolean]; // browser sign-in; true once on the tailnet, false if cancelled
+  tailscale_open_sign_in: [{ id: string }, void]; // opens the waiting join's sign-in page again
+  tailscale_cancel: [{ id: string }, void];
   setup_action: [{ action: SetupAction }, void];
   quit_app: [undefined, void];
 }

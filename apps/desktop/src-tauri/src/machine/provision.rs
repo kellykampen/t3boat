@@ -136,7 +136,7 @@ fn script(
 }
 
 /// Only `[A-Za-z0-9._-]` reaches the remote shell.
-fn shell_word(s: &str) -> Result<&str> {
+pub(crate) fn shell_word(s: &str) -> Result<&str> {
     if !s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')) {
         bail!("unsafe value for the remote shell: {s}");
     }

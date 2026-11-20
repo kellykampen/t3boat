@@ -506,6 +506,29 @@ async fn set_tailscale_key(ui: State<'_, Ui>, key: String) -> Res {
     ui.app()?.set_tailscale_key(&key).await.map_err(err)
 }
 
+/// Joins the machine to the user's tailnet with a browser sign-in (wakes it). Progress is in its
+/// `tailscaleJoin`; resolves true once on the tailnet, false if cancelled.
+#[tauri::command]
+async fn tailscale_connect(ui: State<'_, Ui>, id: String) -> Res<bool> {
+    let app = ui.app()?;
+    let machine = app.machine(&id).map_err(err)?;
+    app.connect_tailnet(&machine).await.map_err(err)
+}
+
+/// Opens the sign-in page of a join waiting for one again.
+#[tauri::command]
+fn tailscale_open_sign_in(ui: State<'_, Ui>, id: String) -> Res {
+    let app = ui.app()?;
+    let machine = app.machine(&id).map_err(err)?;
+    app.open_tailnet_sign_in(&machine).map_err(err)
+}
+
+#[tauri::command]
+fn tailscale_cancel(ui: State<'_, Ui>, id: String) -> Res {
+    ui.app()?.machine(&id).map_err(err)?.cancel_tailnet_join();
+    Ok(())
+}
+
 #[tauri::command]
 async fn remove_tailscale_key(ui: State<'_, Ui>) -> Res {
     ui.app()?.remove_tailscale_key().await.map_err(err)
@@ -613,6 +636,9 @@ pub fn run() {
             update_settings,
             set_tailscale_key,
             remove_tailscale_key,
+            tailscale_connect,
+            tailscale_open_sign_in,
+            tailscale_cancel,
             setup_action,
             add_mcp,
             quit_app

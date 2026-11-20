@@ -1,7 +1,8 @@
 //! Headless driver for development: runs the app model and proxies without the tray.
 //! Reads commands from stdin: list | create <name> [size] | pair <id> | wake <id> | sleep <id> |
 //! keep <id> [minutes] (keep awake; none: until stopped, 0 ends it) | connect <id> | delete <id> | costs |
-//! tailscale-key <file> (the key is read from a file, never typed into a command) | tailscale-forget
+//! tailscale-key <file> (the key is read from a file, never typed into a command) | tailscale-forget |
+//! tailscale-mode <off|browser|key> | tailscale-connect <id> (browser sign-in)
 
 use std::sync::Arc;
 use t3boat_lib::app::{self, App, Setup};
@@ -74,6 +75,15 @@ async fn command(app: &Arc<App>, words: &[String]) -> anyhow::Result<()> {
         Some("tailscale-forget") => {
             app.remove_tailscale_key().await?;
             println!("OK tailscale key removed");
+        }
+        Some("tailscale-mode") => {
+            let tailscale = serde_json::from_value(serde_json::Value::String(arg(1)))?;
+            app.update_settings(t3boat_lib::store::Settings { tailscale, ..app.settings() });
+            println!("OK tailscale mode {}", arg(1));
+        }
+        Some("tailscale-connect") => {
+            let joined = app.connect_tailnet(&*app.machine(&arg(1))?).await?;
+            println!("{}", if joined { "OK on the tailnet" } else { "CANCELLED" });
         }
         Some("costs") => {
             app.refresh_costs().await;

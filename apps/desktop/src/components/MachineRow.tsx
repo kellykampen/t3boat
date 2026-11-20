@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { MachineView, Size } from "../types";
-import { ACTIONS, machineKey, tailnetHost, menuActions, needsProject, primaryAction, seedOf, signInTo, type Action, type MenuItem } from "../machine";
+import type { MachineView, Size, TailscaleMode } from "../types";
+import { ACTIONS, joiningTailnet, machineKey, tailnetHost, menuActions, needsProject, primaryAction, seedOf, signInTo, type Action, type MenuItem } from "../machine";
 import { AgentName, AgentNames } from "./AgentLogos";
 import { BoatIcon } from "./BoatIcon";
 import { DeleteErrorNote, Dots, useArmed, useDetail } from "./common";
@@ -9,6 +9,8 @@ import { Icon } from "./Icons";
 interface Props {
   machine: MachineView;
   sizes: Size[];
+  /** Settings › Tailscale: offers "Connect to tailnet" in the menu unless off */
+  tailscaleMode: TailscaleMode;
   /** label of the command currently running for this machine */
   pending: string | null;
   /** why the last delete was refused (work still running) */
@@ -23,6 +25,7 @@ interface Props {
 export function MachineRow({
   machine: m,
   sizes,
+  tailscaleMode,
   pending,
   deleteError,
   onAction,
@@ -33,7 +36,7 @@ export function MachineRow({
   const key = machineKey(m);
   const primary = primaryAction(m);
   const detail = useDetail(m);
-  const extra = menuActions(m, sizes);
+  const extra = menuActions(m, sizes, tailscaleMode);
   const [armed, arm] = useArmed(); // two-step confirm for the primary "Remove"
   // "Add a project…" picks from T3 Code's projects in the details view
   const menuAction = (a: MenuItem) => ("kind" in a ? onOpen?.(true) : onAction(a));
@@ -70,6 +73,15 @@ export function MachineRow({
           {m.tailscale ? (
             <span className="chip chip-tailnet" title={`On your tailnet as ${tailnetHost(m)}`}>
               tailnet
+            </span>
+          ) : joiningTailnet(m) ? (
+            <span
+              className="chip chip-tailnet chip-joining"
+              role="img"
+              aria-label="Joining your tailnet"
+              title="Joining your tailnet: sign in to Tailscale in the browser"
+            >
+              <Dots />
             </span>
           ) : null}
         </div>

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMachineDetails, useLatestThread } from "../api";
-import type { MachineDetails as Details, LocalProject, MachineView, Size } from "../types";
+import type { MachineDetails as Details, LocalProject, MachineView, Size, TailscaleMode } from "../types";
 import {
   ACTIONS,
   autoSleep,
+  canJoinTailnet,
   duration,
   hourly,
   STAY_AWAKE,
@@ -40,8 +41,8 @@ interface Props {
   deleteError: string | null;
   /** opened from the row's "Add a project…" or "Add one": start with the project picker open */
   pickProject: boolean;
-  /** a Tailscale auth key is saved (UiState.tailscale.configured) */
-  tailscaleConfigured: boolean;
+  /** Settings › Tailscale */
+  tailscaleMode: TailscaleMode;
   onAction: (a: Action) => void;
   onAddProject: (p: LocalProject) => void;
   onDismissDeleteError: () => void;
@@ -57,7 +58,7 @@ export function MachineDetails({
   pending,
   deleteError,
   pickProject,
-  tailscaleConfigured,
+  tailscaleMode,
   onAction,
   onAddProject,
   onDismissDeleteError,
@@ -86,7 +87,7 @@ export function MachineDetails({
           m={m}
           d={d}
           pending={pending}
-          tailscaleConfigured={tailscaleConfigured}
+          tailscaleMode={tailscaleMode}
           onAction={onAction}
           onOpenSettings={onOpenSettings}
         />
@@ -353,14 +354,14 @@ function Connect({
   m,
   d,
   pending,
-  tailscaleConfigured,
+  tailscaleMode,
   onAction,
   onOpenSettings,
 }: {
   m: MachineView;
   d: Details | null;
   pending: string | null;
-  tailscaleConfigured: boolean;
+  tailscaleMode: TailscaleMode;
   onAction: (a: Action) => void;
   onOpenSettings: () => void;
 }) {
@@ -402,14 +403,24 @@ function Connect({
         ) : (
           <Skeleton rows={1} />
         )}
-        <Tailscale m={m} configured={tailscaleConfigured} onOpenSettings={onOpenSettings} />
+        <Tailscale m={m} mode={tailscaleMode} onAction={onAction} onOpenSettings={onOpenSettings} />
       </ul>
     </Section>
   );
 }
 
-/** Whether it's on the user's tailnet: only machines created while a key was saved joined. */
-function Tailscale({ m, configured, onOpenSettings }: { m: MachineView; configured: boolean; onOpenSettings: () => void }) {
+/** Whether it's on the user's tailnet, and joining it with a browser sign-in (any machine, old ones too). */
+function Tailscale({
+  m,
+  mode,
+  onAction,
+  onOpenSettings,
+}: {
+  m: MachineView;
+  mode: TailscaleMode;
+  onAction: (a: Action) => void;
+  onOpenSettings: () => void;
+}) {
   const [copied, setCopied] = useState<"ok" | "failed" | null>(null);
   useEffect(() => {
     if (!copied) return;
@@ -446,11 +457,55 @@ function Tailscale({ m, configured, onOpenSettings }: { m: MachineView; configur
       </li>
     );
   }
-  if (configured) {
+  const join = m.tailscaleJoin;
+  if (join?.state === "starting" || join?.state === "waitingForSignIn") {
+    const waiting = join.state === "waitingForSignIn";
     return (
-      <li className="line">
-        <span className="line-main line-dim line-wrap">Tailscale: not on your tailnet · only machines created after adding a key join</span>
-      </li>
+      <>
+        <li className="line">
+          <span className="line-main">Tailscale</span>
+          <span className="line-status caption">
+            <Dots /> {!waiting ? "Starting…" : join.url ? "Waiting for sign-in" : "Waiting for approval"}
+          </span>
+          {waiting && join.url ? (
+            <button className="btn btn-sm btn-outline" onClick={() => onAction(ACTIONS.tailnetLink)}>
+              Open link
+            </button>
+          ) : null}
+          <button className="btn btn-link" onClick={() => onAction(ACTIONS.tailnetCancel)}>
+            Cancel
+          </button>
+        </li>
+        <li className="line">
+          <span className="line-main line-dim line-wrap">
+            {!waiting
+              ? "Installing Tailscale; the sign-in page opens next"
+              : join.url
+                ? "Sign in to Tailscale in the browser and click Connect"
+                : "A tailnet admin has to approve the device in Tailscale's admin console"}
+          </span>
+        </li>
+      </>
+    );
+  }
+  if (mode !== "off") {
+    const connect = canJoinTailnet(m, mode);
+    return (
+      <>
+        <li className="line">
+          <span className="line-main">Tailscale</span>
+          <button className="btn btn-sm btn-outline" disabled={!connect} onClick={() => onAction(ACTIONS.tailnet)}>
+            {join?.state === "error" ? "Try again" : "Connect"}
+          </button>
+        </li>
+        <li className="line">
+          <span className={`line-main line-wrap ${join?.state === "error" ? "line-error" : "line-dim"}`}>
+            {join?.state === "error"
+              ? `Couldn't join: ${join.message}`
+              : `Sign in with your browser; it joins as ${tailnetHost(m)} with Tailscale SSH`}
+          </span>
+        </li>
+      </>
     );
   }
   return (
