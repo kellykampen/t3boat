@@ -394,8 +394,24 @@ fn get_state(ui: State<'_, Ui>) -> UiState {
 }
 
 #[tauri::command]
-async fn create_machine(ui: State<'_, Ui>, name: String, size: String, projects: Option<Vec<String>>) -> Res {
-    ui.app()?.create_machine(&name, &size, projects.unwrap_or_default()).await.map(drop).map_err(err)
+async fn create_machine(
+    ui: State<'_, Ui>,
+    name: String,
+    size: String,
+    projects: Option<Vec<String>>,
+    snapshot: Option<String>,
+) -> Res {
+    ui.app()?
+        .create_machine(&name, &size, snapshot.as_deref(), projects.unwrap_or_default())
+        .await
+        .map(drop)
+        .map_err(err)
+}
+
+/// The user's saved Boat snapshots a new machine can start from.
+#[tauri::command]
+async fn list_snapshots(ui: State<'_, Ui>) -> Res<Vec<crate::boat::Snapshot>> {
+    ui.app()?.snapshots().await.map_err(err)
 }
 
 /// This computer's T3 projects that can go to a machine.
@@ -578,6 +594,7 @@ pub fn run() {
             get_state,
             create_machine,
             local_projects,
+            list_snapshots,
             add_project,
             wake_machine,
             sleep_machine,

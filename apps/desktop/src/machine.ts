@@ -169,6 +169,31 @@ export const needsProject = (m: MachineView) =>
 export const shortDate = (unixSecs: number) =>
   new Date(unixSecs * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
+/** "just now", "12m ago", "3h ago", "2d ago", then a date past four weeks. */
+export function ago(iso: string, now = Date.now()): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const m = Math.floor((now - then) / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  if (m < 24 * 60) return `${Math.floor(m / 60)}h ago`;
+  if (m < 28 * 24 * 60) return `${Math.floor(m / (24 * 60))}d ago`;
+  return shortDate(then / 1000);
+}
+
+/** t3boat's own sleep snapshots are named `t3boat-<machine>-<sandbox id>` (`provision::snapshot_name`). */
+export const isMachineSnapshot = (name: string) => name.startsWith("t3boat-");
+
+/** The machine a snapshot was taken of, by name when t3boat knows it (or its snapshot name says it), else its sandbox id. */
+export function snapshotSource(s: { name: string; sourceSandboxId: string | null }, machines: MachineView[]): string | null {
+  if (!s.sourceSandboxId) return null;
+  const known = machines.find((m) => m.id && m.id === s.sourceSandboxId);
+  if (known) return known.name;
+  const id = s.sourceSandboxId.toLowerCase().replace(/[^a-z0-9]/g, "-");
+  const fromName = isMachineSnapshot(s.name) && s.name.endsWith(`-${id}`) ? s.name.slice("t3boat-".length, -id.length - 1) : "";
+  return fromName || s.sourceSandboxId;
+}
+
 export const money = (n: number) => `$${n.toFixed(2)}`;
 export const hourly = (n: number) => `$${n < 0.1 ? n.toFixed(3) : n.toFixed(2)}/h`;
 
@@ -184,6 +209,8 @@ export function suggestName(taken: string[]): string {
 }
 
 export const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+/** What a new machine can start from, as `provision::check_start_snapshot` takes it: a saved snapshot's name or a Boat share code. */
+export const SNAPSHOT_RE = /^(?:[a-z0-9][a-z0-9-]{0,127}|bsh_[A-Za-z0-9]{1,128})$/;
 
 export function cleanName(raw: string): string {
   return raw

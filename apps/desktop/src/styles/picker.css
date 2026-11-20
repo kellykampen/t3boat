@@ -175,3 +175,63 @@
   padding: 0;
   font: 400 11.5px var(--font-body);
 }
+
+/* ── new machine: start from snapshot, a combobox over saved snapshots ── */
+
+.snap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.snap .prompt-input {
+  padding-right: 4px;
+}
+.snap .prompt-input input {
+  font-size: 14px;
+}
+.snap .prompt-input input::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+  font-size: 12px;
+}
+.snap-btn {
+  flex: none;
+  width: 26px;
+  height: 26px;
+}
+.snap-toggle .icon {
+  transition: transform 120ms ease;
+}
+.snap-toggle.is-open .icon {
+  transform: rotate(180deg);
+}
+/* attached to the field above it: one frame, no gap */
+.snap-list {
+  margin: -1px 0 0;
+  border-color: var(--accent-text);
+}
+.snap-list .pick-scroll {
+  height: auto;
+  max-height: 212px;
+  padding-bottom: 4px;
+}
+.snap-group {
+  padding: 9px 10px 3px;
+  border-top: 1px solid var(--line);
+}
+.snap-option {
+  height: 38px;
+}
+.snap-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 10.5px/1.2 var(--font-mono);
+  color: var(--muted);
+}
+.snap-none {
+  color: var(--muted);
+}
+.pick-option.is-active .snap-none {
+  color: var(--accent-text);
+}
