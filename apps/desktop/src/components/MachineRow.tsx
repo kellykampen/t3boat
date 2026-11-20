@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MachineView, Size } from "../types";
-import { ACTIONS, machineKey, menuActions, needsProject, primaryAction, seedOf, signInTo, type Action, type MenuItem } from "../machine";
+import { ACTIONS, machineKey, tailnetHost, menuActions, needsProject, primaryAction, seedOf, signInTo, type Action, type MenuItem } from "../machine";
 import { AgentName, AgentNames } from "./AgentLogos";
 import { BoatIcon } from "./BoatIcon";
 import { DeleteErrorNote, Dots, useArmed, useDetail } from "./common";
@@ -67,6 +67,11 @@ export function MachineRow({
             <span className="row-name">{m.name}</span>
           )}
           <span className="chip">{m.size}</span>
+          {m.tailscale ? (
+            <span className="chip chip-tailnet" title={`On your tailnet as ${tailnetHost(m)}`}>
+              tailnet
+            </span>
+          ) : null}
         </div>
         <div className="row-detail" title={detail}>
           {detail}

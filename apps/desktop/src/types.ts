@@ -25,6 +25,7 @@ export interface MachineView {
   projects: MachineProject[]; // its T3 projects as last seen (never wakes it), then those being added
   keepAwakeUntil: number | null; // when a "keep awake" runs out (unix ms); null when off or until stopped
   keepAwakeForever: boolean; // kept awake until someone stops it: no auto sleep
+  tailscale: boolean; // joined the user's tailnet as t3boat-<name> when it was created
 }
 
 export interface MachineProject {

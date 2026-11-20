@@ -3,20 +3,23 @@
 // ?machines=0|many|<count>  ?busy=1  ?mcp=mixed (Claude Code added, Codex not installed)
 // ?projects=0|error (T3 Code has no projects with a remote / listing them fails)
 // ?ready=1 (a new machine comes up in T3 Code with its agents signed in and acme on it, as the website shows it)
+// ?tailscale=1 (a Tailscale auth key is saved, so new machines join the tailnet; t3-main and side-quest
+//   always joined, the others predate the key)
 import type { Backend } from "./api";
 import { timeLapse } from "./pixel/clock";
 import type { CommandArgs, CommandName, LocalProject, MachineDetails, MachineProject, MachineView, Setup, UiState } from "./types";
 
 const params = new URLSearchParams(location.search);
 
-type Seed = Omit<MachineView, "countdown" | "signedOut" | "projects" | "keepAwakeUntil" | "keepAwakeForever"> &
-  Partial<Pick<MachineView, "countdown" | "signedOut" | "projects">>;
+type Seed = Omit<MachineView, "countdown" | "signedOut" | "projects" | "keepAwakeUntil" | "keepAwakeForever" | "tailscale"> &
+  Partial<Pick<MachineView, "countdown" | "signedOut" | "projects" | "tailscale">>;
 const machine = (m: Seed): MachineView => ({
   countdown: null,
   signedOut: [],
   projects: [],
   keepAwakeUntil: null,
   keepAwakeForever: false,
+  tailscale: false,
   ...m,
 });
 
@@ -54,6 +57,7 @@ const seedMachines: MachineView[] = [
     state: "working",
     detail: "Working · 2 threads · 3 subagents",
     paired: true,
+    tailscale: true,
     projects: [onMachine("t3code", "github.com/pingdotgg/t3code"), onMachine("website", "github.com/you/website")],
   }),
   machine({
@@ -63,6 +67,7 @@ const seedMachines: MachineView[] = [
     state: "idle",
     ...idle(),
     paired: true,
+    tailscale: true,
     signedOut: ["Claude", "Codex"],
   }),
   machine({ id: "sb_02bb", name: "scratch", size: "small", state: "idle", detail: "Idle · not in T3 Code yet", paired: false }),
@@ -179,6 +184,7 @@ function create(): MockBackend {
               id,
               state: "idle",
               ...idle(),
+              tailscale: state.tailscale.configured,
               ...(params.get("ready") === "1"
                 ? { paired: true, projects: projects?.length ? [] : [onMachine("acme", "github.com/you/acme")] }
                 : { signedOut: ["Claude", "Codex"] }),

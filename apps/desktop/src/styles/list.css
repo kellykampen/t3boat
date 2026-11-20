@@ -241,3 +241,6 @@
 .empty .btn-lg {
   margin-top: 8px;
 }
+.chip-tailnet {
+  color: var(--accent-text);
+}

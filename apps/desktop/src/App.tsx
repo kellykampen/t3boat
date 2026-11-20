@@ -224,10 +224,12 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
           pending={pending[machineKey(selected)] ?? null}
           deleteError={deleteErrors[machineKey(selected)] ?? null}
           pickProject={pickProject}
+          tailscaleConfigured={state.tailscale.configured}
           onAction={(a) => act(selected, a)}
           onAddProject={(p) => addProject(selected, p)}
           onDismissDeleteError={() => setDeleteErrors((d) => without(d, machineKey(selected)))}
           onError={detailsError}
+          onOpenSettings={() => setView("settings")}
           onBack={back}
         />
       ) : view === "new" ? (

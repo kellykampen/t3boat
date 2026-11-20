@@ -51,14 +51,25 @@ export function SettingsView({
   // the key lives here only until saved; the backend never sends it back
   const [tsKey, setTsKey] = useState("");
   const [tsBusy, setTsBusy] = useState(false);
+  // "Replace": the form again while a key stays saved until the new one is
+  const [replacing, setReplacing] = useState(false);
   const saveKey = (e: FormEvent) => {
     e.preventDefault();
     if (!tsKey.trim() || tsBusy) return;
     setTsBusy(true);
     onSaveTailscaleKey(tsKey)
-      .then((ok) => ok && setTsKey(""))
+      .then((ok) => {
+        if (!ok) return;
+        setTsKey("");
+        setReplacing(false);
+      })
       .finally(() => setTsBusy(false));
   };
+  const cancelReplace = () => {
+    setTsKey("");
+    setReplacing(false);
+  };
+  const onTailnet = state.machines.filter((m) => m.tailscale).length;
   const removeKey = () => {
     setTsBusy(true);
     onRemoveTailscaleKey().finally(() => setTsBusy(false));
@@ -138,21 +149,25 @@ export function SettingsView({
             tailscale
           </label>
           <span className="setting-name">Join new machines to your tailnet</span>
-          {state.tailscale.configured ? (
-            <div className="tailscale-row">
+          {state.tailscale.configured && !replacing ? (
+            <div className="tailscale-row is-saved">
               <span className="mcp-added">
                 <Icon name="check" size={10} />
-                <span>Auth key saved in your keychain</span>
+                <span>Key saved · new machines join your tailnet</span>
               </span>
+              <button className="btn btn-sm btn-quiet" disabled={tsBusy} onClick={() => setReplacing(true)}>
+                Replace
+              </button>
               <button className="btn btn-sm btn-quiet" disabled={tsBusy} aria-busy={tsBusy} onClick={removeKey}>
                 Remove
               </button>
             </div>
           ) : (
-            <form className="tailscale-row" onSubmit={saveKey}>
+            <form className={`tailscale-row${replacing ? " is-replacing" : ""}`} onSubmit={saveKey}>
               <span className="prompt-input tailscale-input">
                 <input
                   id="tailscale-key"
+                  autoFocus={replacing}
                   type="password"
                   placeholder="tskey-auth-…"
                   aria-describedby="tailscale-hint"
@@ -176,11 +191,17 @@ export function SettingsView({
                   "Save"
                 )}
               </button>
+              {replacing ? (
+                <button type="button" className="btn btn-sm btn-quiet" disabled={tsBusy} onClick={cancelReplace}>
+                  Cancel
+                </button>
+              ) : null}
             </form>
           )}
           <span className="hint" id="tailscale-hint">
             Use a reusable, pre-authorized auth key tagged e.g. tag:t3boat. New machines join as t3boat-‹name› with
             Tailscale SSH; asleep, they show as offline.
+            {onTailnet ? ` ${onTailnet} ${onTailnet === 1 ? "machine is" : "machines are"} on your tailnet.` : ""}
           </span>
         </div>
       </div>

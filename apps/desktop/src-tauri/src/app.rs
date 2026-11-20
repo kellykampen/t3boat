@@ -75,6 +75,8 @@ pub struct MachineView {
     /// When a "keep awake" runs out (unix ms); none when off or until stopped.
     pub keep_awake_until: Option<u64>,
     pub keep_awake_forever: bool,
+    /// It joined the user's tailnet as `t3boat-<name>` when it was created.
+    pub tailscale: bool,
 }
 
 /// `detail` as `template` with `{left}` filled in: the time left until `ends_at` (unix ms).
@@ -531,6 +533,7 @@ impl App {
                 projects: Vec::new(),
                 keep_awake_until: None,
                 keep_awake_forever: false,
+                tailscale: false,
             });
         }
         views
@@ -752,6 +755,7 @@ fn view(m: &MachineRuntime) -> MachineView {
             .filter(|w| w.keep_awake_secs > 0)
             .map(|w| unix_ms_after(w.received, w.keep_awake_secs)),
         keep_awake_forever: running_watchdog.is_some_and(|w| w.keep_awake_forever),
+        tailscale: r.tailscale,
     }
 }
 

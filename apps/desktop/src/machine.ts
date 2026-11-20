@@ -17,6 +17,11 @@ export const stateTag = (s: MachineState) => TAGS[s];
 /** Stable key: creating rows have no id yet. */
 export const machineKey = (m: MachineView) => m.id || `new:${m.name}`;
 
+/** Its name on the user's tailnet (provision.sh joins it with `--hostname=t3boat-<name>`). */
+export const tailnetHost = (m: MachineView) => `t3boat-${m.name}`;
+/** Tailscale SSH maps to the machine's `user` account (README → Tailscale). */
+export const tailnetSsh = (m: MachineView) => `ssh user@${tailnetHost(m)}`;
+
 export function seedOf(key: string): number {
   let h = 0;
   for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;

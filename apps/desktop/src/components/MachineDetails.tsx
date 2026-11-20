@@ -18,6 +18,8 @@ import {
   seedOf,
   shortDate,
   signInTo,
+  tailnetHost,
+  tailnetSsh,
   sizeOf,
   timeLeft,
   type Action,
@@ -38,10 +40,13 @@ interface Props {
   deleteError: string | null;
   /** opened from the row's "Add a project…" or "Add one": start with the project picker open */
   pickProject: boolean;
+  /** a Tailscale auth key is saved (UiState.tailscale.configured) */
+  tailscaleConfigured: boolean;
   onAction: (a: Action) => void;
   onAddProject: (p: LocalProject) => void;
   onDismissDeleteError: () => void;
   onError: (text: string) => void;
+  onOpenSettings: () => void;
   onBack: () => void;
 }
 
@@ -52,10 +57,12 @@ export function MachineDetails({
   pending,
   deleteError,
   pickProject,
+  tailscaleConfigured,
   onAction,
   onAddProject,
   onDismissDeleteError,
   onError,
+  onOpenSettings,
   onBack,
 }: Props) {
   const d = useMachineDetails(m.id, version, onError);
@@ -75,7 +82,14 @@ export function MachineDetails({
         <Glance m={m} size={sizeOf(sizes, m.size)} d={d} />
         {gone ? null : <Power m={m} busy={busy} onAction={onAction} />}
         <Agents m={m} d={d} pending={pending} onAction={onAction} />
-        <Connect m={m} d={d} pending={pending} onAction={onAction} />
+        <Connect
+          m={m}
+          d={d}
+          pending={pending}
+          tailscaleConfigured={tailscaleConfigured}
+          onAction={onAction}
+          onOpenSettings={onOpenSettings}
+        />
         <Projects m={m} pickProject={pickProject} onAddProject={onAddProject} />
         <MachineMore
           m={m}
@@ -334,17 +348,21 @@ function Agents({
   );
 }
 
-/** T3 Connect: the user's phone or a browser reach the machine with their T3 account. */
+/** T3 Connect: the user's phone or a browser reach the machine with their T3 account. Tailscale: their tailnet. */
 function Connect({
   m,
   d,
   pending,
+  tailscaleConfigured,
   onAction,
+  onOpenSettings,
 }: {
   m: MachineView;
   d: Details | null;
   pending: string | null;
+  tailscaleConfigured: boolean;
   onAction: (a: Action) => void;
+  onOpenSettings: () => void;
 }) {
   const running = pending === ACTIONS.connect.busy;
   return (
@@ -384,8 +402,64 @@ function Connect({
         ) : (
           <Skeleton rows={1} />
         )}
+        <Tailscale m={m} configured={tailscaleConfigured} onOpenSettings={onOpenSettings} />
       </ul>
     </Section>
+  );
+}
+
+/** Whether it's on the user's tailnet: only machines created while a key was saved joined. */
+function Tailscale({ m, configured, onOpenSettings }: { m: MachineView; configured: boolean; onOpenSettings: () => void }) {
+  const [copied, setCopied] = useState<"ok" | "failed" | null>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(null), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const ssh = tailnetSsh(m);
+  const copy = () =>
+    navigator.clipboard.writeText(ssh).then(
+      () => setCopied("ok"),
+      () => setCopied("failed"),
+    );
+
+  if (m.tailscale) {
+    return (
+      <li className="line line-tailscale">
+        <span>Tailscale</span>
+        <span className="line-main line-host selectable" title={`On your tailnet as ${tailnetHost(m)}`}>
+          {tailnetHost(m)}
+        </span>
+        <button className="btn btn-sm btn-quiet copy-btn" title={`Copy “${ssh}”`} onClick={copy}>
+          {copied === "ok" ? (
+            <>
+              <Icon name="check" size={10} /> Copied
+            </>
+          ) : copied === "failed" ? (
+            "Couldn't copy"
+          ) : (
+            <>
+              <Icon name="copy" size={10} /> Copy ssh
+            </>
+          )}
+        </button>
+      </li>
+    );
+  }
+  if (configured) {
+    return (
+      <li className="line">
+        <span className="line-main line-dim line-wrap">Tailscale: not on your tailnet · only machines created after adding a key join</span>
+      </li>
+    );
+  }
+  return (
+    <li className="line">
+      <span className="line-main line-dim">Tailscale: off</span>
+      <button className="btn btn-link" onClick={onOpenSettings}>
+        Set up in Settings
+      </button>
+    </li>
   );
 }
 

@@ -39,6 +39,10 @@ interface MachineView {
                        // there. repoKey = T3's repository key. Paired with none → "No projects yet · Add one"
   keepAwakeUntil: number | null; // when a "keep awake" runs out (unix ms); null when off or until stopped
   keepAwakeForever: boolean; // kept awake until stopped: no auto sleep
+  tailscale: boolean;  // it joined the user's tailnet as `t3boat-<name>` (Tailscale SSH) when created.
+                       // List: a "tailnet" chip. Details → other devices: the hostname + "Copy ssh"
+                       // (`ssh user@t3boat-<name>`); false → "not on your tailnet" when a key is
+                       // saved (it predates the key), else "Tailscale: off" linking to Settings
 }
 
 interface UiState {
@@ -56,7 +60,8 @@ interface UiState {
                                    // (Settings → "Coding agents" disables its button with a hint)
   tailscale: { configured: boolean }; // a Tailscale auth key is saved in the OS keychain; the key
                                    // itself never reaches the UI. Settings → Tailscale shows a
-                                   // password field + Save when false, "saved" + Remove when true
+                                   // password field + Save when false; "Key saved · new machines
+                                   // join your tailnet" + Replace (the field again) + Remove when true
 }
 ```
 
