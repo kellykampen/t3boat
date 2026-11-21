@@ -245,7 +245,9 @@ impl MachineRuntime {
             return Ok(());
         }
         let may_restart = self.watchdog_get("/status?fresh").await.is_ok_and(|s| !s.busy);
-        let out = self.shared.boat.exec_ok(&self.sandbox_id(), &tailscale::serve_script(may_restart), 240).await?;
+        let record = self.record();
+        let script = tailscale::serve_script(may_restart, &provision::snapshot_name(&record.name, &record.id))?;
+        let out = self.shared.boat.exec_ok(&self.sandbox_id(), &script, 240).await?;
         let report = ServeReport::parse(&out)?;
         let suffix = tailscale::local_suffix().await;
         let (url, https_off) = serve_outcome(&report, suffix.as_deref());

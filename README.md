@@ -66,7 +66,7 @@ In t3boat's Settings → Tailscale, pick **Browser**. Each new machine then open
 
 A machine joined this way belongs to you, like a laptop you signed in on: its key expires after 180 days unless you disable key expiry for it in the admin console. Tailscale's default access rules already let you SSH to your own devices (`autogroup:self`, with a browser check now and then); with custom rules, allow `user` on them.
 
-A sleeping machine shows as offline and comes back when it wakes. Deleting an awake machine logs it out of the tailnet; delete an asleep one and remove its offline node in the admin console.
+A sleeping machine shows as offline and comes back when it wakes: t3boat starts Tailscale on it once it sees the machine awake (never at boot, so a machine started from another's snapshot can't come up as that machine; it joins as its own node). Deleting an awake machine logs it out of the tailnet: its node goes offline with an expired key and can't come back, and you remove it in the admin console. Delete an asleep one and remove its offline node there too.
 
 ### T3 over the tailnet
 

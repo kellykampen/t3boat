@@ -124,8 +124,13 @@ ts_state() {
 }
 if sudo test -f "$ts_owner" && [ "$(sudo cat "$ts_owner")" != "$snapshot" ]; then
   sudo systemctl stop tailscaled >/dev/null 2>&1 || true
-  sudo rm -rf "$ts_dir"
+  # Emptied, not removed: on a machine started from a snapshot, Boat mounts it (busy to rm).
+  sudo find "$ts_dir" -mindepth 1 -delete
   # Started again (as a new, logged-out node) only below, with a key.
+fi
+# Machines from before tailscaled stopped starting at boot.
+if command -v tailscale >/dev/null; then
+  sudo systemctl disable tailscaled >/dev/null 2>&1 || true
 fi
 if [ -n "$ts_key" ]; then
   if ! command -v tailscale >/dev/null; then
@@ -135,7 +140,10 @@ if [ -n "$ts_key" ]; then
       exit 1
     fi
   fi
-  if ! sudo systemctl enable --now tailscaled >/dev/null 2>&1; then
+  # Never at boot: a disk copied to a new machine would come up on the tailnet as this node until
+  # provisioning wipes it. Started here, and on each wake by tailscale-serve.sh on this disk only.
+  sudo systemctl disable tailscaled >/dev/null 2>&1 || true
+  if ! sudo systemctl start tailscaled >/dev/null 2>&1; then
     echo "Tailscale: tailscaled did not start" >&2
     exit 1
   fi

@@ -165,11 +165,12 @@ pub const HTTPS_SETTINGS_URL: &str = "https://login.tailscale.com/admin/dns";
 
 const SERVE_SH: &str = include_str!("machine/tailscale-serve.sh");
 
-/// Run on a machine on the tailnet: turns on T3's own Tailscale Serve (see the script). Its
+/// Run on a machine on the tailnet, on every wake: starts tailscaled on the machine's own disk
+/// (`snapshot`: its owner marker), then turns on T3's own Tailscale Serve (see the script). Its
 /// output ends in a `ServeReport` line. `may_restart`: T3 may be restarted to take the setting,
 /// which stops agent turns.
-pub fn serve_script(may_restart: bool) -> String {
-    format!("set -- {}\n{SERVE_SH}", u8::from(may_restart))
+pub fn serve_script(may_restart: bool, snapshot: &str) -> Result<String> {
+    Ok(format!("set -- {} {}\n{SERVE_SH}", u8::from(may_restart), shell_word(snapshot)?))
 }
 
 /// What `serve_script` found.
@@ -363,9 +364,11 @@ mod tests {
 
     #[test]
     fn serve_script_passes_the_restart_choice_first() {
-        assert!(serve_script(true).starts_with("set -- 1\n"));
-        assert!(serve_script(false).starts_with("set -- 0\n"));
-        let s = serve_script(true);
+        assert!(serve_script(true, "t3boat-dev-bx").unwrap().starts_with("set -- 1 t3boat-dev-bx\n"));
+        assert!(serve_script(false, "t3boat-dev-bx").unwrap().starts_with("set -- 0 t3boat-dev-bx\n"));
+        assert!(serve_script(true, "dev; rm -rf ~").is_err());
+        let s = serve_script(true, "t3boat-dev-bx").unwrap();
+        assert!(s.contains("systemctl start tailscaled"));
         assert!(s.contains("T3CODE_TAILSCALE_SERVE=true"));
         assert!(s.contains("--operator="));
         assert!(!s.contains("tskey"));
